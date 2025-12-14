@@ -1,8 +1,0 @@
-name = "VTC Smart Booking"
-type = "theme"
-uid = "b36eb7d8-fc4b-6366-e575-33354dbd35fda37a6e5"
-
-[[blocks]]
-name = "VTC Smart Booking"
-target = "section"
-file = "blocks/vtc-smart-booking.liquid"

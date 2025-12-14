@@ -1,0 +1,211 @@
+<div
+    id="vtc-smart-booking-widget"
+    class="vtc-widget"
+    data-slack-endpoint="{% if block.settings.slack_endpoint_url != blank %}{{ block.settings.slack_endpoint_url }}{% endif %}"
+    data-berline-img="{% if block.settings.berline_image != blank %}{{ block.settings.berline_image | image_url }}{% endif %}"
+    data-van-img="{% if block.settings.van_image != blank %}{{ block.settings.van_image | image_url }}{% endif %}"
+    data-autre-img="{% if block.settings.autre_image != blank %}{{ block.settings.autre_image | image_url }}{% endif %}"
+>
+
+    <h2 class="vtc-title">VTC Smart Booking</h2>
+    <p class="vtc-subtitle">Obtenez une estimation instantanée de votre trajet.</p>
+
+    <!-- TYPE DE VÉHICULE -->
+    <div class="vtc-section">
+        <label class="vtc-label">Type de véhicule :</label>
+        <div class="vtc-radio-group">
+            <label><input type="radio" name="vehicle" value="berline" checked> Berline</label>
+            <label><input type="radio" name="vehicle" value="van"> Van 7 places</label>
+            <label><input type="radio" name="vehicle" value="autre"> Autre (sur devis)</label>
+        </div>
+    </div>
+
+    <!-- OPTIONS -->
+    <div class="vtc-section">
+        <label class="vtc-label">Options :</label>
+
+        <label class="vtc-checkbox">
+            <input type="checkbox" id="petOption"> Animal de compagnie (+20 €)
+        </label>
+
+        <label class="vtc-checkbox">
+            <input type="checkbox" id="babySeatOption"> Siège bébé (+15 €)
+        </label>
+
+        <label class="vtc-label">Option personnalisée :</label>
+        <input id="customOption" type="text" placeholder="Ex : plusieurs vans, car, demande spéciale…" class="vtc-input">
+    </div>
+
+    <!-- ADRESSES -->
+    <div class="vtc-section">
+        <div style="display:flex;gap:10px;align-items:center;">
+            <input id="start" class="vtc-input" placeholder="Adresse de départ" style="flex:1;width:auto;">
+            <button type="button" id="geoStartBtn" aria-label="Utiliser ma position" style="padding:10px 12px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer;">📍</button>
+        </div>
+        <input id="end" class="vtc-input" placeholder="Adresse d’arrivée">
+
+        <div id="stops-container"></div>
+
+        <label class="vtc-checkbox" style="display:block;margin-top:10px;">
+            <input type="checkbox" id="europeMode">
+            Étendre la recherche à l’Europe
+        </label>
+
+        <button type="button" class="vtc-add-stop" onclick="addStopField()">+ Ajouter un arrêt</button>
+    </div>
+
+    <!-- DATE -->
+    <div class="vtc-section">
+        <label class="vtc-label">Date de prise en charge :</label>
+        <input id="pickupDate" type="date" class="vtc-input">
+    </div>
+
+    <!-- HEURE -->
+    <div class="vtc-section">
+        <label class="vtc-label">Heure de prise en charge :</label>
+        <input id="pickupTime" type="time" class="vtc-input">
+    </div>
+
+    <!-- BOUTON CALCUL -->
+    <button type="button" class="vtc-btn" onclick="calculatePrice()">Calculer le prix</button>
+
+    <!-- MAP -->
+    <div id="map"
+         style="width:100%;height:260px;margin-top:20px;border-radius:12px;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+    </div>
+
+    <!-- RÉSUMÉ TRAJET -->
+    <div id="route-summary"
+         style="display:none;margin-top:22px;background:#fafafa;padding:18px;border-radius:12px;border:1px solid #e5e5e5;font-family:'Inter',sans-serif;">
+    </div>
+
+    <!-- FORMULAIRE COORDONNÉES VISIBLES (B1) -->
+    <div id="contact-wrapper" class="vtc-contact" style="display:none;margin-top:22px;">
+        <h3 style="font-size:18px;margin-bottom:6px;">Vos coordonnées</h3>
+        <p style="font-size:14px;opacity:0.8;margin-bottom:12px;">
+            Uniquement nécessaire pour réserver / être recontacté.
+        </p>
+
+        <input id="customerName" class="vtc-input" placeholder="Nom et prénom">
+        <input id="customerEmail" class="vtc-input" placeholder="Adresse e-mail">
+        <input id="customerPhone" class="vtc-input" placeholder="Téléphone">
+
+        <p id="contact-error" style="color:#c00;font-size:14px;margin-top:6px;"></p>
+
+        {% assign privacy_href = shop.policies.privacy_policy.url %}
+        {% if privacy_href == blank %}{% assign privacy_href = '#' %}{% endif %}
+        {% assign terms_href = shop.policies.terms_of_service.url %}
+        {% if terms_href == blank %}{% assign terms_href = '#' %}{% endif %}
+
+        <label class="vtc-checkbox" style="display:block;margin-top:12px;">
+            <input type="checkbox" id="termsConsent" required>
+            J’ai lu et j’accepte les <a href="{{ terms_href }}">Conditions</a> et la <a href="{{ privacy_href }}">Politique de confidentialité</a>.
+        </label>
+
+        <label class="vtc-checkbox" style="display:block;margin-top:10px;">
+            <input type="checkbox" id="marketingConsent">
+            J’accepte de recevoir des offres/actualités par e-mail/SMS. (facultatif, désinscription possible)
+        </label>
+
+        <p id="consent-error" style="color:#c00;font-size:14px;margin-top:6px;"></p>
+    </div>
+
+    <!-- PRIX + BOUTON RESERVER -->
+    <div id="result-wrapper" style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;">
+        <p id="result" class="vtc-result" style="margin:0;"></p>
+
+        <button type="button" id="reserve-btn"
+                disabled
+                style="
+                    padding:16px 26px;
+                    background:#000;
+                    color:white;
+                    border:none;
+                    border-radius:10px;
+                    font-size:16px;
+                    font-weight:600;
+                    opacity:0.45;
+                    cursor:not-allowed;
+                    transition:0.25s ease;">
+            Réserver mon trajet
+        </button>
+    </div>
+
+</div>
+
+{% schema %}
+{
+  "name": "VTC Smart Booking",
+  "target": "section",
+  "enabled_on": {
+    "templates": ["index", "page", "product"]
+  },
+  "settings": [
+    {
+      "type": "text",
+      "id": "google_maps_api_key",
+      "label": "Google Maps API Key"
+        },
+        {
+            "type": "text",
+            "id": "slack_endpoint_url",
+            "label": "Slack endpoint URL (optionnel)",
+            "info": "Optionnel : laisser vide pour utiliser l’App Proxy (par défaut: /apps/vtc/api/slack-booking). Renseignez uniquement si vous voulez surcharger l’endpoint."
+        },
+        {
+            "type": "image_picker",
+            "id": "berline_image",
+            "label": "Image véhicule (Berline)"
+        },
+        {
+            "type": "image_picker",
+            "id": "van_image",
+            "label": "Image véhicule (Van)"
+        },
+        {
+            "type": "image_picker",
+            "id": "autre_image",
+            "label": "Image véhicule (Autre)"
+    }
+  ]
+}
+{% endschema %}
+
+<script src="{{ 'vtc-booking.js' | asset_url }}" defer></script>
+
+<script src="https://maps.googleapis.com/maps/api/js?key={{ block.settings.google_maps_api_key }}&libraries=places&callback=initAutocomplete" defer></script>
+
+<style>
+    .vtc-widget {
+        max-width: 650px;
+        background: #ffffff;
+        padding: 26px;
+        border-radius: 14px;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.12);
+        margin: auto;
+        font-family: 'Inter', sans-serif;
+    }
+    .vtc-label { font-weight:600; margin-bottom:6px; display:block; }
+    .vtc-section { margin-bottom:22px; }
+    .vtc-input { width:100%;padding:14px;margin:8px 0;border-radius:8px;border:1px solid #ccc;font-size:15px; }
+    .vtc-btn {
+        width:100%;
+        padding:16px;
+        font-size:18px;
+        font-weight:600;
+        background:black;
+        color:white;
+        border:none;
+        border-radius:10px;
+        cursor:pointer;
+        transition:0.3s;
+    }
+    .vtc-btn:hover { background:#333; }
+    .vtc-add-stop {
+        margin-top:10px;
+        background:transparent;
+        border:none;
+        color:#007bff;
+        cursor:pointer;
+    }
+</style>
