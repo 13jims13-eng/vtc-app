@@ -31,7 +31,10 @@
     data-autre-img="{% if vtc_vehicle_image_autre != blank %}{{ vtc_vehicle_image_autre | image_url }}{% endif %}"
 >
 
-    <h2 class="vtc-title">VTC Smart Booking</h2>
+    {% assign vtc_widget_title = block.settings.widget_title | strip %}
+    {% if vtc_widget_title == blank %}{% assign vtc_widget_title = 'VTC Smart Booking' %}{% endif %}
+
+    <h2 class="vtc-title">{{ vtc_widget_title }}</h2>
     <p class="vtc-subtitle">Obtenez une estimation instantanée de votre trajet.</p>
 
     <!-- TYPE DE VÉHICULE -->
@@ -170,6 +173,12 @@
       "id": "google_maps_api_key",
       "label": "Google Maps API Key"
         },
+                {
+                        "type": "text",
+                        "id": "widget_title",
+                        "label": "Titre du widget",
+                        "default": "VTC Smart Booking"
+                },
         {
             "type": "text",
             "id": "base_fare_berline",
