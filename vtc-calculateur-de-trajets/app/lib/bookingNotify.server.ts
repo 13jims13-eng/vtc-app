@@ -28,6 +28,7 @@ export type BookingNotifyRequestBody = {
   };
   config?: {
     bookingEmailTo?: string;
+    slackEnabled?: boolean;
   };
 };
 
@@ -277,7 +278,11 @@ export async function sendBookingEmail(summary: BookingSummary) {
   };
 }
 
-export async function sendSlackOptional(text: string) {
+export async function sendSlackOptional(text: string, options?: { enabled?: boolean }) {
+  if (options?.enabled === false) {
+    return { ok: false as const, error: "SLACK_DISABLED" as const };
+  }
+
   const webhook = cleanText(process.env.SLACK_WEBHOOK_URL);
   if (!webhook) return { ok: false as const, error: "SLACK_NOT_CONFIGURED" as const };
 

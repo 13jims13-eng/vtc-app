@@ -1,5 +1,5 @@
 <div
-    id="vtc-smart-booking-widget"
+    id="vtc-widget"
     class="vtc-widget"
     {% assign vtc_notify_endpoint = block.settings.notify_endpoint_url | strip %}
     {% assign vtc_slack_endpoint = block.settings.slack_endpoint_url | strip %}
@@ -7,11 +7,28 @@
     {% if vtc_effective_endpoint == blank %}{% assign vtc_effective_endpoint = vtc_slack_endpoint %}{% endif %}
     data-notify-endpoint="{% if vtc_effective_endpoint != blank and vtc_effective_endpoint contains 'hooks.slack.com' %}{% elsif vtc_effective_endpoint != blank %}{{ vtc_effective_endpoint }}{% endif %}"
     data-slack-endpoint="{% if vtc_slack_endpoint != blank and vtc_slack_endpoint contains 'hooks.slack.com' %}{% elsif vtc_slack_endpoint != blank %}{{ vtc_slack_endpoint }}{% endif %}"
+    data-slack-endpoint-url="{% if vtc_slack_endpoint != blank and vtc_slack_endpoint contains 'hooks.slack.com' %}{% elsif vtc_slack_endpoint != blank %}{{ vtc_slack_endpoint }}{% endif %}"
     {% assign vtc_booking_email_to = block.settings.booking_email_to | strip %}
     data-booking-email-to="{% if vtc_booking_email_to != blank %}{{ vtc_booking_email_to }}{% endif %}"
-    data-berline-img="{% if block.settings.berline_image != blank %}{{ block.settings.berline_image | image_url }}{% endif %}"
-    data-van-img="{% if block.settings.van_image != blank %}{{ block.settings.van_image | image_url }}{% endif %}"
-    data-autre-img="{% if block.settings.autre_image != blank %}{{ block.settings.autre_image | image_url }}{% endif %}"
+    data-base-fare-berline="{{ block.settings.base_fare_berline }}"
+    data-price-per-km-berline="{{ block.settings.price_per_km_berline }}"
+    data-base-fare-van="{{ block.settings.base_fare_van }}"
+    data-price-per-km-van="{{ block.settings.price_per_km_van }}"
+    data-stop-fee="{{ block.settings.stop_fee }}"
+    data-quote-message="{{ block.settings.quote_message | escape }}"
+    data-slack-enabled="{{ block.settings.slack_enabled }}"
+    {% assign vtc_vehicle_image_berline = block.settings.vehicle_image_berline %}
+    {% if vtc_vehicle_image_berline == blank %}{% assign vtc_vehicle_image_berline = block.settings.berline_image %}{% endif %}
+    {% assign vtc_vehicle_image_van = block.settings.vehicle_image_van %}
+    {% if vtc_vehicle_image_van == blank %}{% assign vtc_vehicle_image_van = block.settings.van_image %}{% endif %}
+    {% assign vtc_vehicle_image_autre = block.settings.vehicle_image_autre %}
+    {% if vtc_vehicle_image_autre == blank %}{% assign vtc_vehicle_image_autre = block.settings.autre_image %}{% endif %}
+    data-vehicle-image-berline="{% if vtc_vehicle_image_berline != blank %}{{ vtc_vehicle_image_berline | image_url }}{% endif %}"
+    data-vehicle-image-van="{% if vtc_vehicle_image_van != blank %}{{ vtc_vehicle_image_van | image_url }}{% endif %}"
+    data-vehicle-image-autre="{% if vtc_vehicle_image_autre != blank %}{{ vtc_vehicle_image_autre | image_url }}{% endif %}"
+    data-berline-img="{% if vtc_vehicle_image_berline != blank %}{{ vtc_vehicle_image_berline | image_url }}{% endif %}"
+    data-van-img="{% if vtc_vehicle_image_van != blank %}{{ vtc_vehicle_image_van | image_url }}{% endif %}"
+    data-autre-img="{% if vtc_vehicle_image_autre != blank %}{{ vtc_vehicle_image_autre | image_url }}{% endif %}"
 >
 
     <h2 class="vtc-title">VTC Smart Booking</h2>
@@ -154,6 +171,42 @@
       "label": "Google Maps API Key"
         },
         {
+            "type": "number",
+            "id": "base_fare_berline",
+            "label": "Base fare (Berline)",
+            "default": 29.99
+        },
+        {
+            "type": "number",
+            "id": "price_per_km_berline",
+            "label": "Prix par km (Berline)",
+            "default": 2.4
+        },
+        {
+            "type": "number",
+            "id": "base_fare_van",
+            "label": "Base fare (Van)",
+            "default": 29.99
+        },
+        {
+            "type": "number",
+            "id": "price_per_km_van",
+            "label": "Prix par km (Van)",
+            "default": 3.5
+        },
+        {
+            "type": "number",
+            "id": "stop_fee",
+            "label": "Frais par arrêt",
+            "default": 0
+        },
+        {
+            "type": "text",
+            "id": "quote_message",
+            "label": "Message (Sur devis)",
+            "default": "Sur devis — merci de nous contacter."
+        },
+        {
             "type": "text",
             "id": "notify_endpoint_url",
             "label": "Notify endpoint URL (optionnel)",
@@ -162,8 +215,8 @@
         {
             "type": "text",
             "id": "slack_endpoint_url",
-            "label": "Endpoint serveur (optionnel)",
-            "info": "Optionnel : laisser vide pour utiliser l’App Proxy (par défaut: /apps/vtc/api/booking-notify). Ne mettez jamais une URL Incoming Webhook Slack (hooks.slack.com) ici : elle serait exposée côté storefront."
+            "label": "Endpoint Slack (optionnel)",
+            "info": "Optionnel : laisser vide pour utiliser l’App Proxy (par défaut: /apps/vtc/api/slack-booking). Ne mettez jamais une URL Incoming Webhook Slack (hooks.slack.com) ici : elle serait exposée côté storefront."
         },
         {
             "type": "text",
@@ -172,19 +225,40 @@
             "info": "Optionnel (non secret) : destinataire de l'email de réservation. Si vide, l'app utilise BOOKING_EMAIL_TO (env)."
         },
         {
+            "type": "checkbox",
+            "id": "slack_enabled",
+            "label": "Slack activé",
+            "default": true
+        },
+        {
             "type": "image_picker",
-            "id": "berline_image",
+            "id": "vehicle_image_berline",
             "label": "Image véhicule (Berline)"
         },
         {
             "type": "image_picker",
-            "id": "van_image",
+            "id": "vehicle_image_van",
             "label": "Image véhicule (Van)"
         },
         {
             "type": "image_picker",
-            "id": "autre_image",
+            "id": "vehicle_image_autre",
             "label": "Image véhicule (Autre)"
+        },
+        {
+            "type": "image_picker",
+            "id": "berline_image",
+            "label": "(Legacy) Image Berline"
+        },
+        {
+            "type": "image_picker",
+            "id": "van_image",
+            "label": "(Legacy) Image Van"
+        },
+        {
+            "type": "image_picker",
+            "id": "autre_image",
+            "label": "(Legacy) Image Autre"
     }
   ]
 }

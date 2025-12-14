@@ -35,6 +35,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return jsonResponse({ ok: false, error: validationError }, { status: 500 });
   }
 
+  const slackEnabled = body?.config?.slackEnabled !== false;
+
   console.log("incoming payload ok", {
     hasContact: true,
     start: summary.start,
@@ -50,6 +52,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     termsConsent: summary.termsConsent,
     marketingConsent: summary.marketingConsent,
     hasBookingEmailTo: !!summary.bookingEmailToOverride,
+    slackEnabled,
   });
 
   try {
@@ -65,10 +68,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return jsonResponse({ ok: false, error: "EMAIL_FAILED" }, { status: 500 });
   }
 
-  const slackResult = await sendSlackOptional(summary.text);
+  const slackResult = await sendSlackOptional(summary.text, { enabled: slackEnabled });
   if (slackResult.ok) {
     console.log("slack ok");
-  } else if (slackResult.error === "SLACK_NOT_CONFIGURED") {
+  } else if (slackResult.error === "SLACK_NOT_CONFIGURED" || slackResult.error === "SLACK_DISABLED") {
     console.log("slack skip");
   } else {
     console.error("slack ko", { error: slackResult.error });

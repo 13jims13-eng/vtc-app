@@ -8,6 +8,59 @@ let stopAutocompletes = [];
 let autocompleteInitStarted = false;
 let _europeBoundsCache = null;
 
+function getWidgetEl() {
+  return document.querySelector("#vtc-widget") || document.querySelector("#vtc-smart-booking-widget");
+}
+
+function getWidgetDataset() {
+  return getWidgetEl()?.dataset || {};
+}
+
+function parseNumber(value, fallback) {
+  const n = typeof value === "string" ? Number(value.replace(",", ".")) : Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function parseBoolean(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const v = String(value).trim().toLowerCase();
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  if (["1", "true", "yes", "on"].includes(v)) return true;
+  return fallback;
+}
+
+function getPricingConfig(vehicle, stopsCount) {
+  const cfg = getWidgetDataset();
+
+  const defaults = {
+    baseFareBerline: 29.99,
+    pricePerKmBerline: 2.4,
+    baseFareVan: 29.99,
+    pricePerKmVan: 3.5,
+    stopFee: 0,
+    quoteMessage: "Sur devis — merci de nous contacter.",
+    slackEnabled: true,
+  };
+
+  const baseFare =
+    vehicle === "van"
+      ? parseNumber(cfg.baseFareVan, defaults.baseFareVan)
+      : parseNumber(cfg.baseFareBerline, defaults.baseFareBerline);
+
+  const pricePerKm =
+    vehicle === "van"
+      ? parseNumber(cfg.pricePerKmVan, defaults.pricePerKmVan)
+      : parseNumber(cfg.pricePerKmBerline, defaults.pricePerKmBerline);
+
+  const stopFee = parseNumber(cfg.stopFee, defaults.stopFee);
+  const quoteMessage = (cfg.quoteMessage || defaults.quoteMessage).trim() || defaults.quoteMessage;
+  const slackEnabled = parseBoolean(cfg.slackEnabled, defaults.slackEnabled);
+
+  const extraStopsTotal = Math.max(0, stopsCount || 0) * stopFee;
+
+  return { baseFare, pricePerKm, stopFee, extraStopsTotal, quoteMessage, slackEnabled };
+}
+
 /* --------------------------
    UTILITAIRE : Google prêt ?
 --------------------------- */
@@ -308,12 +361,12 @@ function getVehicleDemoImage(vehicle) {
 }
 
 function getConfiguredVehicleImage(vehicle) {
-  const wrapper = document.getElementById("vtc-smart-booking-widget");
-  if (!wrapper) return "";
+  const cfg = getWidgetDataset();
 
-  const berlineImg = wrapper.dataset.berlineImg || "";
-  const vanImg = wrapper.dataset.vanImg || "";
-  const autreImg = wrapper.dataset.autreImg || "";
+  // Prefer new settings-based attrs, fallback to legacy attrs.
+  const berlineImg = (cfg.vehicleImageBerline || cfg.berlineImg || "").trim();
+  const vanImg = (cfg.vehicleImageVan || cfg.vanImg || "").trim();
+  const autreImg = (cfg.vehicleImageAutre || cfg.autreImg || "").trim();
 
   if (vehicle === "van") return vanImg.trim();
   if (vehicle === "autre") return autreImg.trim();
@@ -325,7 +378,8 @@ function getVehicleImageSrc(vehicle) {
 }
 
 function calculatePrice() {
-  const widget = document.getElementById("vtc-smart-booking-widget") || document;
+  const widgetEl = getWidgetEl();
+  const widget = widgetEl || document;
   const start = document.getElementById("start")?.value || "";
   const end = document.getElementById("end")?.value || "";
   const pickupTime = document.getElementById("pickupTime")?.value || "";
@@ -337,9 +391,17 @@ function calculatePrice() {
     document.querySelector('input[name="vehicle"]:checked')?.value ||
     "berline";
   const isQuote = vehicle === "autre";
+  const quoteMessage = getPricingConfig(vehicle, 0).quoteMessage;
 
   // Nettoyer tout ancien prix (important quand on passe en "Sur devis")
   clearPriceUI(isQuote);
+
+  // En mode "Sur devis", on affiche un message clair sans montant
+  if (isQuote) {
+    if (resultEl) {
+      resultEl.innerHTML = `Sur devis — <span style="opacity:0.85;">${quoteMessage}</span>`;
+    }
+  }
 
   // Réinitialiser le bouton réserver
   if (reserveBtn) {
@@ -439,16 +501,17 @@ function calculatePrice() {
 
     // 6️⃣ Tarifs
     let total = null;
+    const pricing = getPricingConfig(vehicleNow, waypoints.length);
     if (isQuoteNow) {
       clearPriceUI(true);
       total = 0;
+      if (resultEl) {
+        resultEl.innerHTML = `Sur devis — <span style="opacity:0.85;">${pricing.quoteMessage}</span>`;
+      }
     } else {
-      const minFare = 29.99;
-      const priceKmBerline = 2.4; // IMPORTANT : 2,4 € / km pour Berline
-      const priceKmVan = 3.5;
-      const priceKm = vehicleNow === "van" ? priceKmVan : priceKmBerline;
-
-      total = km * priceKm;
+      // Base fare = minimum fare (configurable), price per km configurable
+      total = km * pricing.pricePerKm;
+      total += pricing.extraStopsTotal;
 
       if (document.getElementById("petOption")?.checked) total += 20;
       if (document.getElementById("babySeatOption")?.checked) total += 15;
@@ -462,8 +525,8 @@ function calculatePrice() {
       // Remise si > 600 €
       if (total > 600) total *= 0.90;
 
-      // Minimum
-      if (total < minFare) total = minFare;
+      // Minimum (base fare)
+      if (total < pricing.baseFare) total = pricing.baseFare;
 
       if (resultEl) {
         resultEl.innerHTML = `Prix estimé : <strong>${total.toFixed(2)} €</strong>`;
@@ -488,6 +551,15 @@ function calculatePrice() {
     const summaryDiv = document.getElementById("route-summary");
     if (summaryDiv) {
       summaryDiv.style.display = "block";
+
+      const extraPricingLine =
+        !isQuoteNow && pricing.stopFee > 0 && waypoints.length
+          ? `<div><strong>Frais arrêts :</strong> ${waypoints.length} × ${pricing.stopFee.toFixed(2)} €</div>`
+          : "";
+
+      const quoteLine = isQuoteNow
+        ? `<div style="margin-top:10px;"><strong>Sur devis :</strong> ${pricing.quoteMessage}</div>`
+        : "";
 
       summaryDiv.innerHTML = `
         <h3 style="font-size:18px; margin-bottom:10px;">Résumé du trajet</h3>
@@ -516,6 +588,8 @@ function calculatePrice() {
         <div><strong>Distance :</strong> ${km.toFixed(1)} km</div>
         <div><strong>Durée :</strong> ${Math.round(minutes)} min</div>
         <div><strong>Véhicule :</strong> ${getVehicleLabel(vehicleNow)}</div>
+        ${extraPricingLine}
+        ${quoteLine}
       `;
     }
 
@@ -589,8 +663,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const pickupDate = document.getElementById("pickupDate")?.value || "";
       const pickupTime = document.getElementById("pickupTime")?.value || "";
       const vehicle =
-        document.getElementById("vtc-smart-booking-widget")
-          ?.querySelector?.('input[name="vehicle"]:checked')?.value ||
+        getWidgetEl()?.querySelector?.('input[name="vehicle"]:checked')?.value ||
         document.querySelector('input[name="vehicle"]:checked')?.value ||
         "berline";
 
@@ -625,8 +698,8 @@ document.addEventListener("DOMContentLoaded", () => {
         },
         config: {
           bookingEmailTo:
-            (document.getElementById("vtc-smart-booking-widget")?.dataset?.bookingEmailTo || "").trim() ||
-            undefined,
+            (getWidgetDataset().bookingEmailTo || "").trim() || undefined,
+          slackEnabled: getPricingConfig(vehicle, stops.length).slackEnabled,
         },
       };
 
@@ -653,10 +726,19 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  document.querySelectorAll('#vtc-smart-booking-widget input[name="vehicle"]').forEach((radio) => {
+  const widgetForVehicles = getWidgetEl();
+  (widgetForVehicles
+    ? widgetForVehicles.querySelectorAll('input[name="vehicle"]')
+    : document.querySelectorAll('input[name="vehicle"]')
+  ).forEach((radio) => {
     radio.addEventListener("change", () => {
       if (radio.checked && radio.value === "autre") {
         clearPriceUI(true);
+        const pricing = getPricingConfig("autre", 0);
+        const resultEl = document.getElementById("result");
+        if (resultEl) {
+          resultEl.innerHTML = `Sur devis — <span style="opacity:0.85;">${pricing.quoteMessage}</span>`;
+        }
       }
     });
   });
