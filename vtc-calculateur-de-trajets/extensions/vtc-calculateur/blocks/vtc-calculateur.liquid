@@ -1,7 +1,8 @@
 <div
     id="vtc-smart-booking-widget"
     class="vtc-widget"
-    data-slack-endpoint="{% if block.settings.slack_endpoint_url != blank %}{{ block.settings.slack_endpoint_url }}{% endif %}"
+    {% assign vtc_slack_endpoint = block.settings.slack_endpoint_url | strip %}
+    data-slack-endpoint="{% if vtc_slack_endpoint != blank and vtc_slack_endpoint contains 'hooks.slack.com' %}{% elsif vtc_slack_endpoint != blank %}{{ vtc_slack_endpoint }}{% endif %}"
     data-berline-img="{% if block.settings.berline_image != blank %}{{ block.settings.berline_image | image_url }}{% endif %}"
     data-van-img="{% if block.settings.van_image != blank %}{{ block.settings.van_image | image_url }}{% endif %}"
     data-autre-img="{% if block.settings.autre_image != blank %}{{ block.settings.autre_image | image_url }}{% endif %}"
@@ -150,7 +151,7 @@
             "type": "text",
             "id": "slack_endpoint_url",
             "label": "Slack endpoint URL (optionnel)",
-            "info": "Optionnel : laisser vide pour utiliser l’App Proxy (par défaut: /apps/vtc/api/slack-booking). Renseignez uniquement si vous voulez surcharger l’endpoint."
+            "info": "Optionnel : laisser vide pour utiliser l’App Proxy (par défaut: /apps/vtc/api/slack-booking). Ne mettez jamais une URL Incoming Webhook Slack (hooks.slack.com) ici : elle serait exposée côté storefront."
         },
         {
             "type": "image_picker",

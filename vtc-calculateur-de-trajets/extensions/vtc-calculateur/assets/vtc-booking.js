@@ -208,7 +208,20 @@ function clearPriceUI(isQuote) {
 
 async function postSlackBooking(payload) {
   const widget = document.getElementById("vtc-smart-booking-widget");
-  const endpoint = widget?.dataset?.slackEndpoint || "/apps/vtc/api/slack-booking";
+  const configuredEndpoint = (widget?.dataset?.slackEndpoint || "").trim();
+  const defaultEndpoint = "/apps/vtc/api/slack-booking";
+  const endpoint = configuredEndpoint || defaultEndpoint;
+
+  // Sécurité: ne jamais appeler un Incoming Webhook Slack depuis le storefront.
+  // Le webhook doit rester côté serveur (process.env.SLACK_WEBHOOK_URL).
+  if (/^https?:\/\/hooks\.slack\.com\//i.test(endpoint)) {
+    console.warn("Slack booking: blocked direct Slack webhook usage", { endpoint });
+    return {
+      ok: false,
+      error:
+        "Configuration invalide : n'utilisez pas une URL Incoming Webhook Slack (hooks.slack.com) dans le thème. L'app utilise uniquement le serveur via /apps/vtc/api/slack-booking.",
+    };
+  }
 
   try {
     console.log("Slack booking: POST", endpoint);
