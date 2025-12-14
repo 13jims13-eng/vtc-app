@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs } from "react-router";
-import { action as slackBookingAction } from "../app/routes/api.slack-booking";
+import { action as bookingNotifyAction } from "../app/routes/api.booking-notify";
 
 async function main() {
   const payload = {
@@ -12,7 +12,7 @@ async function main() {
       start: "Point A",
       end: "Point B",
       stops: [],
-      pickupDate: "2025-12-13",
+      pickupDate: "2025-12-14",
       pickupTime: "10:00",
       vehicle: "berline",
       isQuote: false,
@@ -27,24 +27,27 @@ async function main() {
       termsConsent: true,
       marketingConsent: false,
     },
+    // Optional (non-secret): can override the email recipient configured in env
+    // config: { bookingEmailTo: "driver@example.com" },
   };
 
-  const request = new Request("http://internal.test/api/slack-booking", {
+  const request = new Request("http://internal.test/api/booking-notify", {
     method: "POST",
     headers: {
-      Origin: "http://internal.test",
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
   });
 
-  const res = await slackBookingAction({ request } as unknown as ActionFunctionArgs);
+  const res = await bookingNotifyAction({ request } as unknown as ActionFunctionArgs);
   const text = await res.text();
 
   // eslint-disable-next-line no-console
   console.log("STATUS", res.status);
   // eslint-disable-next-line no-console
   console.log(text);
+
+  if (!res.ok) process.exit(1);
 }
 
 main().catch((e) => {

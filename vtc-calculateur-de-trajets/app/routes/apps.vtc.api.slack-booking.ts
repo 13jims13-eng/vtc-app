@@ -33,7 +33,6 @@ export const action = async (args: ActionFunctionArgs) => {
   const requestUrl = new URL(args.request.url);
   console.log("slack-booking hit", {
     method: args.request.method,
-    url: args.request.url,
     path: requestUrl.pathname,
     shop: requestUrl.searchParams.get("shop"),
     hasSignature: requestUrl.searchParams.has("signature"),

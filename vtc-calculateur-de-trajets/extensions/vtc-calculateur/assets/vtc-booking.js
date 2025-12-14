@@ -206,25 +206,31 @@ function clearPriceUI(isQuote) {
   window.lastPrice = isQuote ? 0 : null;
 }
 
-async function postSlackBooking(payload) {
+async function postBookingNotify(payload) {
   const widget = document.getElementById("vtc-smart-booking-widget");
-  const configuredEndpoint = (widget?.dataset?.slackEndpoint || "").trim();
-  const defaultEndpoint = "/apps/vtc/api/slack-booking";
+  const configuredEndpoint = (
+    // nouveau nom (préféré)
+    widget?.dataset?.notifyEndpoint ||
+    // compat: ancien attribut (historique)
+    widget?.dataset?.slackEndpoint ||
+    ""
+  ).trim();
+  const defaultEndpoint = "/apps/vtc/api/booking-notify";
   const endpoint = configuredEndpoint || defaultEndpoint;
 
   // Sécurité: ne jamais appeler un Incoming Webhook Slack depuis le storefront.
-  // Le webhook doit rester côté serveur (process.env.SLACK_WEBHOOK_URL).
+  // Les secrets (Slack/SMTP) doivent rester côté serveur.
   if (/^https?:\/\/hooks\.slack\.com\//i.test(endpoint)) {
-    console.warn("Slack booking: blocked direct Slack webhook usage", { endpoint });
+    console.warn("booking-notify: blocked direct Slack webhook usage", { endpoint });
     return {
       ok: false,
       error:
-        "Configuration invalide : n'utilisez pas une URL Incoming Webhook Slack (hooks.slack.com) dans le thème. L'app utilise uniquement le serveur via /apps/vtc/api/slack-booking.",
+        "Configuration invalide : n'utilisez pas une URL Incoming Webhook Slack (hooks.slack.com) dans le thème. Utilisez uniquement un endpoint serveur (par défaut: /apps/vtc/api/booking-notify).",
     };
   }
 
   try {
-    console.log("Slack booking: POST", endpoint);
+    console.log("booking-notify: POST", endpoint);
     const resp = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -232,14 +238,7 @@ async function postSlackBooking(payload) {
     });
 
     const rawText = await resp.text().catch(() => "");
-    console.log("Slack booking: response", {
-      url: endpoint,
-      status: resp.status,
-      ok: resp.ok,
-      body: rawText,
-    });
-
-    const data = (() => {
+    const parsed = (() => {
       try {
         return rawText ? JSON.parse(rawText) : null;
       } catch {
@@ -247,11 +246,20 @@ async function postSlackBooking(payload) {
       }
     })();
 
+    console.log("booking-notify: response", {
+      url: endpoint,
+      status: resp.status,
+      ok: resp.ok,
+      json: parsed,
+      body: rawText,
+    });
+
+    const data = parsed;
+
     if (!resp.ok) {
       return {
         ok: false,
-        error:
-          "Impossible de contacter le serveur. Vérifiez que l'app est démarrée et que l'endpoint est accessible.",
+        error: "Impossible de contacter le serveur…",
         detail: data?.error || rawText || null,
         status: resp.status,
       };
@@ -263,11 +271,10 @@ async function postSlackBooking(payload) {
 
     return { ok: false, error: "Réponse serveur invalide", detail: rawText || null };
   } catch (err) {
-    console.log("Slack booking: fetch error", { url: endpoint, err });
+    console.log("booking-notify: fetch error", { url: endpoint, err });
     return {
       ok: false,
-      error:
-        "Impossible de contacter le serveur. Vérifiez que l'app est démarrée et que l'endpoint est accessible.",
+      error: "Impossible de contacter le serveur…",
     };
   }
 }
@@ -616,13 +623,18 @@ document.addEventListener("DOMContentLoaded", () => {
           termsConsent: true,
           marketingConsent: !!marketingConsent?.checked,
         },
+        config: {
+          bookingEmailTo:
+            (document.getElementById("vtc-smart-booking-widget")?.dataset?.bookingEmailTo || "").trim() ||
+            undefined,
+        },
       };
 
-      const res = await postSlackBooking(payload);
+      const res = await postBookingNotify(payload);
       if (!res?.ok) {
         const msg =
           res?.error ||
-          "Impossible de contacter le serveur. Vérifiez que l'app est démarrée et que l'endpoint est accessible.";
+          "Impossible de contacter le serveur…";
 
         const contactErrorEl = document.getElementById("contact-error");
         if (contactErrorEl) contactErrorEl.textContent = msg;
@@ -632,7 +644,12 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      alert("Votre demande a bien été envoyée. Nous vous recontactons rapidement.");
+      const okMsg = "Demande envoyée ✅";
+      const contactErrorEl = document.getElementById("contact-error");
+      if (contactErrorEl) contactErrorEl.textContent = okMsg;
+      if (consentErrorEl) consentErrorEl.textContent = "";
+
+      alert(okMsg);
     });
   }
 

@@ -1,18 +1,18 @@
-// Client test: calls the Shopify App Proxy endpoint from the storefront URL.
+// Client test: calls the Shopify App Proxy booking-notify endpoint from the storefront URL.
 // Usage:
-//   node scripts/run-slack-booking-client-test.mjs
-//   SHOP_URL=vtc-dev.myshopify.com node scripts/run-slack-booking-client-test.mjs
-//   PROXY_PATH=/apps/vtc/api/booking-notify node scripts/run-slack-booking-client-test.mjs
-//   MODE=GET node scripts/run-slack-booking-client-test.mjs
-//   COOKIE="storefront_digest=...;" MODE=POST node scripts/run-slack-booking-client-test.mjs
+//   node scripts/run-booking-notify-client-test.mjs
+//   SHOP_URL=vtc-dev.myshopify.com node scripts/run-booking-notify-client-test.mjs
+//   PROXY_PATH=/apps/vtc/api/booking-notify node scripts/run-booking-notify-client-test.mjs
+//   MODE=POST node scripts/run-booking-notify-client-test.mjs
+//   COOKIE="storefront_digest=...;" MODE=POST node scripts/run-booking-notify-client-test.mjs
 //
 // Notes:
-// - Default endpoint is booking-notify (email mandatory; Slack optional).
-// - To test the legacy Slack-only endpoint, set PROXY_PATH=/apps/vtc/api/slack-booking.
+// - If EMAIL is not configured server-side, you should get 500 { ok:false, error:"EMAIL_NOT_CONFIGURED" }.
+// - Slack is optional; if it fails but email succeeds, you should still get 200 { ok:true, ... }.
 
 const shopUrl = process.env.SHOP_URL || "vtc-dev.myshopify.com";
 const proxyPath = process.env.PROXY_PATH || "/apps/vtc/api/booking-notify";
-const mode = (process.env.MODE || "BOTH").toUpperCase();
+const mode = (process.env.MODE || "POST").toUpperCase();
 const cookie = process.env.COOKIE || "";
 
 const baseUrl = `https://${shopUrl}${proxyPath}`;
@@ -21,8 +21,6 @@ function printResponse(prefix, res, bodyText) {
   console.log(`${prefix} STATUS`, res.status);
   const ct = res.headers.get("content-type");
   if (ct) console.log(`${prefix} Content-Type`, ct);
-  const location = res.headers.get("location");
-  if (location) console.log(`${prefix} Location`, location);
 
   const looksLikePasswordPage =
     (ct && ct.includes("text/html")) ||
@@ -42,19 +40,6 @@ function printResponse(prefix, res, bodyText) {
   }
 
   console.log(`${prefix} BODY`, bodyText);
-}
-
-async function doGet() {
-  console.log("GET", baseUrl);
-  const res = await fetch(baseUrl, {
-    method: "GET",
-    headers: {
-      Accept: "application/json, text/plain, */*",
-      ...(cookie ? { Cookie: cookie } : null),
-    },
-  });
-  const text = await res.text();
-  printResponse("GET", res, text);
 }
 
 async function doPost() {
@@ -102,11 +87,11 @@ async function doPost() {
 }
 
 async function main() {
-  if (mode === "GET") return doGet();
-  if (mode === "POST") return doPost();
+  if (mode !== "POST") {
+    console.error("Only MODE=POST is supported for booking-notify.");
+    process.exit(2);
+  }
 
-  await doGet();
-  console.log("---");
   await doPost();
 }
 

@@ -19,7 +19,5 @@ export const action = async (args: ActionFunctionArgs) => {
   // Validate that this request really comes via the Shopify App Proxy
   await authenticate.public.appProxy(args.request);
 
-  console.log("reservation click received");
-
   return slackBookingAction(args);
 };
