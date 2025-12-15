@@ -17,6 +17,72 @@
     data-stop-fee="{{ block.settings.stop_fee }}"
     data-quote-message="{{ block.settings.quote_message | escape }}"
     data-slack-enabled="{{ block.settings.slack_enabled }}"
+        {% comment %}Vehicles/options JSON config (preferred by vtc-booking.js).{% endcomment %}
+        {% assign display_mode = block.settings.display_mode | strip %}
+        {% if display_mode == blank %}{% assign display_mode = 'A' %}{% endif %}
+        {% capture vehicles_json %}
+            [
+            {% assign first_vehicle = true %}
+            {% for i in (1..6) %}
+                {% assign enabled_id = 'vehicle_' | append: i | append: '_enabled' %}
+                {% if block.settings[enabled_id] %}
+                    {% assign id_id = 'vehicle_' | append: i | append: '_id' %}
+                    {% assign label_id = 'vehicle_' | append: i | append: '_label' %}
+                    {% assign base_fare_id = 'vehicle_' | append: i | append: '_base_fare' %}
+                    {% assign price_per_km_id = 'vehicle_' | append: i | append: '_price_per_km' %}
+                    {% assign quote_only_id = 'vehicle_' | append: i | append: '_quote_only' %}
+                    {% assign image_id = 'vehicle_' | append: i | append: '_image' %}
+
+                    {% assign vehicle_image = block.settings[image_id] %}
+                    {% if i == 1 and vehicle_image == blank %}{% assign vehicle_image = vtc_vehicle_image_berline %}{% endif %}
+                    {% if i == 2 and vehicle_image == blank %}{% assign vehicle_image = vtc_vehicle_image_van %}{% endif %}
+                    {% if i == 3 and vehicle_image == blank %}{% assign vehicle_image = vtc_vehicle_image_autre %}{% endif %}
+
+                    {% if first_vehicle %}{% assign first_vehicle = false %}{% else %},{% endif %}
+                    {
+                        "id": {{ block.settings[id_id] | default: '' | strip | json }},
+                        "label": {{ block.settings[label_id] | default: '' | strip | json }},
+                        "baseFare": {{ block.settings[base_fare_id] | default: '' | strip | json }},
+                        "pricePerKm": {{ block.settings[price_per_km_id] | default: '' | strip | json }},
+                        "quoteOnly": {% if block.settings[quote_only_id] %}true{% else %}false{% endif %},
+                        "imageUrl": {% if vehicle_image != blank %}{{ vehicle_image | image_url | json }}{% else %}""{% endif %}
+                    }
+                {% endif %}
+            {% endfor %}
+            ]
+        {% endcapture %}
+
+        {% capture options_json %}
+            [
+            {% assign first_option = true %}
+            {% for i in (1..6) %}
+                {% assign enabled_id = 'option_' | append: i | append: '_enabled' %}
+                {% if block.settings[enabled_id] %}
+                    {% assign id_id = 'option_' | append: i | append: '_id' %}
+                    {% assign label_id = 'option_' | append: i | append: '_label' %}
+                    {% assign fee_id = 'option_' | append: i | append: '_fee' %}
+
+                    {% if first_option %}{% assign first_option = false %}{% else %},{% endif %}
+                    {
+                        "id": {{ block.settings[id_id] | default: '' | strip | json }},
+                        "label": {{ block.settings[label_id] | default: '' | strip | json }},
+                        "fee": {{ block.settings[fee_id] | default: '' | strip | json }}
+                    }
+                {% endif %}
+            {% endfor %}
+            ]
+        {% endcapture %}
+
+        {% capture widget_config_json %}
+            {
+                "displayMode": {{ display_mode | json }},
+                "stopFee": {{ block.settings.stop_fee | default: '' | strip | json }},
+                "quoteMessage": {{ block.settings.quote_message | default: '' | strip | json }},
+                "vehicles": {{ vehicles_json | strip_newlines }},
+                "options": {{ options_json | strip_newlines }}
+            }
+        {% endcapture %}
+        data-config='{{ widget_config_json | strip_newlines | escape }}'
     {% assign vtc_vehicle_image_berline = block.settings.vehicle_image_berline %}
     {% if vtc_vehicle_image_berline == blank %}{% assign vtc_vehicle_image_berline = block.settings.berline_image %}{% endif %}
     {% assign vtc_vehicle_image_van = block.settings.vehicle_image_van %}
@@ -40,24 +106,13 @@
     <!-- TYPE DE VÉHICULE -->
     <div class="vtc-section">
         <label class="vtc-label">Type de véhicule :</label>
-        <div class="vtc-radio-group">
-            <label><input type="radio" name="vehicle" value="berline" checked> Berline</label>
-            <label><input type="radio" name="vehicle" value="van"> Van 7 places</label>
-            <label><input type="radio" name="vehicle" value="autre"> Autre (sur devis)</label>
-        </div>
+        <div id="vtc-vehicles" class="vtc-radio-group"></div>
     </div>
 
     <!-- OPTIONS -->
     <div class="vtc-section">
         <label class="vtc-label">Options :</label>
-
-        <label class="vtc-checkbox">
-            <input type="checkbox" id="petOption"> Animal de compagnie (+20 €)
-        </label>
-
-        <label class="vtc-checkbox">
-            <input type="checkbox" id="babySeatOption"> Siège bébé (+15 €)
-        </label>
+        <div id="vtc-options"></div>
 
         <label class="vtc-label">Option personnalisée :</label>
         <input id="customOption" type="text" placeholder="Ex : plusieurs vans, car, demande spéciale…" class="vtc-input">
@@ -94,7 +149,10 @@
     </div>
 
     <!-- BOUTON CALCUL -->
-    <button type="button" class="vtc-btn" onclick="calculatePrice()">Calculer le prix</button>
+    <button type="button" class="vtc-btn" onclick="calculatePrice()">Calculer les tarifs</button>
+
+    <!-- TARIFS (mode B) -->
+    <div id="vtc-tariffs" class="vtc-section" style="display:none;"></div>
 
     <!-- MAP -->
     <div id="map"
@@ -179,6 +237,16 @@
                         "label": "Titre du widget",
                         "default": "VTC Smart Booking"
                 },
+            {
+                "type": "select",
+                "id": "display_mode",
+                "label": "Mode d’affichage (véhicules)",
+                "default": "A",
+                "options": [
+                  { "value": "A", "label": "A — Choisir le véhicule avant calcul" },
+                  { "value": "B", "label": "B — Afficher tous les tarifs après calcul" }
+                ]
+            },
         {
             "type": "text",
             "id": "base_fare_berline",
@@ -220,6 +288,148 @@
             "label": "Message (Sur devis)",
             "default": "Sur devis — merci de nous contacter."
         },
+
+                {
+                    "type": "header",
+                    "content": "Véhicules (jusqu’à 6)"
+                },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_1_enabled",
+                    "label": "Véhicule #1 activé",
+                    "default": true
+                },
+                { "type": "text", "id": "vehicle_1_id", "label": "Véhicule #1 — ID", "default": "berline" },
+                { "type": "text", "id": "vehicle_1_label", "label": "Véhicule #1 — Libellé", "default": "Berline" },
+                {
+                    "type": "text",
+                    "id": "vehicle_1_base_fare",
+                    "label": "Véhicule #1 — Base fare",
+                    "default": "29.99",
+                    "info": "Montant minimum (ex: 29.99). Utilisez un point pour les décimales."
+                },
+                {
+                    "type": "text",
+                    "id": "vehicle_1_price_per_km",
+                    "label": "Véhicule #1 — Prix par km",
+                    "default": "2.4",
+                    "info": "Prix au km (ex: 2.4). Utilisez un point pour les décimales."
+                },
+                { "type": "checkbox", "id": "vehicle_1_quote_only", "label": "Véhicule #1 — Sur devis", "default": false },
+                { "type": "image_picker", "id": "vehicle_1_image", "label": "Véhicule #1 — Image" },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_2_enabled",
+                    "label": "Véhicule #2 activé",
+                    "default": true
+                },
+                { "type": "text", "id": "vehicle_2_id", "label": "Véhicule #2 — ID", "default": "van" },
+                { "type": "text", "id": "vehicle_2_label", "label": "Véhicule #2 — Libellé", "default": "Van 7 places" },
+                {
+                    "type": "text",
+                    "id": "vehicle_2_base_fare",
+                    "label": "Véhicule #2 — Base fare",
+                    "default": "29.99",
+                    "info": "Montant minimum (ex: 29.99). Utilisez un point pour les décimales."
+                },
+                {
+                    "type": "text",
+                    "id": "vehicle_2_price_per_km",
+                    "label": "Véhicule #2 — Prix par km",
+                    "default": "3.5",
+                    "info": "Prix au km (ex: 3.5). Utilisez un point pour les décimales."
+                },
+                { "type": "checkbox", "id": "vehicle_2_quote_only", "label": "Véhicule #2 — Sur devis", "default": false },
+                { "type": "image_picker", "id": "vehicle_2_image", "label": "Véhicule #2 — Image" },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_3_enabled",
+                    "label": "Véhicule #3 activé",
+                    "default": true
+                },
+                { "type": "text", "id": "vehicle_3_id", "label": "Véhicule #3 — ID", "default": "autre" },
+                { "type": "text", "id": "vehicle_3_label", "label": "Véhicule #3 — Libellé", "default": "Autre (sur devis)" },
+                { "type": "text", "id": "vehicle_3_base_fare", "label": "Véhicule #3 — Base fare", "default": "0" },
+                { "type": "text", "id": "vehicle_3_price_per_km", "label": "Véhicule #3 — Prix par km", "default": "0" },
+                { "type": "checkbox", "id": "vehicle_3_quote_only", "label": "Véhicule #3 — Sur devis", "default": true },
+                { "type": "image_picker", "id": "vehicle_3_image", "label": "Véhicule #3 — Image" },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_4_enabled",
+                    "label": "Véhicule #4 activé",
+                    "default": false
+                },
+                { "type": "text", "id": "vehicle_4_id", "label": "Véhicule #4 — ID", "default": "vehicle_4" },
+                { "type": "text", "id": "vehicle_4_label", "label": "Véhicule #4 — Libellé", "default": "Véhicule 4" },
+                { "type": "text", "id": "vehicle_4_base_fare", "label": "Véhicule #4 — Base fare", "default": "0" },
+                { "type": "text", "id": "vehicle_4_price_per_km", "label": "Véhicule #4 — Prix par km", "default": "0" },
+                { "type": "checkbox", "id": "vehicle_4_quote_only", "label": "Véhicule #4 — Sur devis", "default": false },
+                { "type": "image_picker", "id": "vehicle_4_image", "label": "Véhicule #4 — Image" },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_5_enabled",
+                    "label": "Véhicule #5 activé",
+                    "default": false
+                },
+                { "type": "text", "id": "vehicle_5_id", "label": "Véhicule #5 — ID", "default": "vehicle_5" },
+                { "type": "text", "id": "vehicle_5_label", "label": "Véhicule #5 — Libellé", "default": "Véhicule 5" },
+                { "type": "text", "id": "vehicle_5_base_fare", "label": "Véhicule #5 — Base fare", "default": "0" },
+                { "type": "text", "id": "vehicle_5_price_per_km", "label": "Véhicule #5 — Prix par km", "default": "0" },
+                { "type": "checkbox", "id": "vehicle_5_quote_only", "label": "Véhicule #5 — Sur devis", "default": false },
+                { "type": "image_picker", "id": "vehicle_5_image", "label": "Véhicule #5 — Image" },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_6_enabled",
+                    "label": "Véhicule #6 activé",
+                    "default": false
+                },
+                { "type": "text", "id": "vehicle_6_id", "label": "Véhicule #6 — ID", "default": "vehicle_6" },
+                { "type": "text", "id": "vehicle_6_label", "label": "Véhicule #6 — Libellé", "default": "Véhicule 6" },
+                { "type": "text", "id": "vehicle_6_base_fare", "label": "Véhicule #6 — Base fare", "default": "0" },
+                { "type": "text", "id": "vehicle_6_price_per_km", "label": "Véhicule #6 — Prix par km", "default": "0" },
+                { "type": "checkbox", "id": "vehicle_6_quote_only", "label": "Véhicule #6 — Sur devis", "default": false },
+                { "type": "image_picker", "id": "vehicle_6_image", "label": "Véhicule #6 — Image" },
+
+                {
+                    "type": "header",
+                    "content": "Options (jusqu’à 6)"
+                },
+
+                { "type": "checkbox", "id": "option_1_enabled", "label": "Option #1 activée", "default": true },
+                { "type": "text", "id": "option_1_id", "label": "Option #1 — ID", "default": "pet" },
+                { "type": "text", "id": "option_1_label", "label": "Option #1 — Libellé", "default": "Animal de compagnie" },
+                { "type": "text", "id": "option_1_fee", "label": "Option #1 — Supplément (€)", "default": "20", "info": "Utilisez un point pour les décimales." },
+
+                { "type": "checkbox", "id": "option_2_enabled", "label": "Option #2 activée", "default": true },
+                { "type": "text", "id": "option_2_id", "label": "Option #2 — ID", "default": "baby_seat" },
+                { "type": "text", "id": "option_2_label", "label": "Option #2 — Libellé", "default": "Siège bébé" },
+                { "type": "text", "id": "option_2_fee", "label": "Option #2 — Supplément (€)", "default": "15", "info": "Utilisez un point pour les décimales." },
+
+                { "type": "checkbox", "id": "option_3_enabled", "label": "Option #3 activée", "default": false },
+                { "type": "text", "id": "option_3_id", "label": "Option #3 — ID", "default": "option_3" },
+                { "type": "text", "id": "option_3_label", "label": "Option #3 — Libellé", "default": "Option 3" },
+                { "type": "text", "id": "option_3_fee", "label": "Option #3 — Supplément (€)", "default": "0", "info": "Utilisez un point pour les décimales." },
+
+                { "type": "checkbox", "id": "option_4_enabled", "label": "Option #4 activée", "default": false },
+                { "type": "text", "id": "option_4_id", "label": "Option #4 — ID", "default": "option_4" },
+                { "type": "text", "id": "option_4_label", "label": "Option #4 — Libellé", "default": "Option 4" },
+                { "type": "text", "id": "option_4_fee", "label": "Option #4 — Supplément (€)", "default": "0", "info": "Utilisez un point pour les décimales." },
+
+                { "type": "checkbox", "id": "option_5_enabled", "label": "Option #5 activée", "default": false },
+                { "type": "text", "id": "option_5_id", "label": "Option #5 — ID", "default": "option_5" },
+                { "type": "text", "id": "option_5_label", "label": "Option #5 — Libellé", "default": "Option 5" },
+                { "type": "text", "id": "option_5_fee", "label": "Option #5 — Supplément (€)", "default": "0", "info": "Utilisez un point pour les décimales." },
+
+                { "type": "checkbox", "id": "option_6_enabled", "label": "Option #6 activée", "default": false },
+                { "type": "text", "id": "option_6_id", "label": "Option #6 — ID", "default": "option_6" },
+                { "type": "text", "id": "option_6_label", "label": "Option #6 — Libellé", "default": "Option 6" },
+                { "type": "text", "id": "option_6_fee", "label": "Option #6 — Supplément (€)", "default": "0", "info": "Utilisez un point pour les décimales." }
         {
             "type": "text",
             "id": "notify_endpoint_url",

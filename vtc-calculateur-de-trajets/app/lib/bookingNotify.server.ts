@@ -14,9 +14,12 @@ export type BookingNotifyRequestBody = {
     pickupDate?: string;
     pickupTime?: string;
     vehicle?: string;
+    vehicleLabel?: string;
     isQuote?: boolean;
     petOption?: boolean;
     babySeatOption?: boolean;
+    options?: unknown[];
+    optionsTotalFee?: number;
     customOption?: string;
     price?: number;
     distanceKm?: number;
@@ -90,6 +93,7 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
   const pickupDate = cleanText(trip?.pickupDate);
   const pickupTime = cleanText(trip?.pickupTime);
   const vehicle = cleanText(trip?.vehicle);
+  const vehicleLabel = cleanText(trip?.vehicleLabel);
 
   const stopsRaw = Array.isArray(trip?.stops)
     ? trip.stops
@@ -111,6 +115,22 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
 
   const petOption = !!trip?.petOption;
   const babySeatOption = !!trip?.babySeatOption;
+
+  const optionsRaw = Array.isArray(trip?.options) ? trip.options : [];
+  const options = optionsRaw
+    .map((o) => {
+      const obj = (o || {}) as { id?: unknown; label?: unknown; fee?: unknown };
+      const id = cleanText(obj.id);
+      const label = cleanText(obj.label);
+      const fee = typeof obj.fee === "number" ? obj.fee : null;
+      return {
+        id,
+        label,
+        fee,
+      };
+    })
+    .filter((o) => !!o.id || !!o.label);
+
   const customOption = cleanText(trip?.customOption);
 
   const termsConsent = !!consents?.termsConsent;
@@ -129,6 +149,19 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
 
   const dateTimeText = `${pickupDate}${pickupTime ? ` ${pickupTime}` : ""}`;
 
+  const vehicleText = vehicleLabel ? `${vehicleLabel}${vehicle ? ` (${vehicle})` : ""}` : vehicle;
+
+  const optionsText = options.length
+    ? options
+        .map((o) => {
+          const name = o.label || o.id;
+          if (!name) return "";
+          return typeof o.fee === "number" ? `${name} (+${o.fee.toFixed(2)} €)` : name;
+        })
+        .filter(Boolean)
+        .join(" | ")
+    : `animal=${petOption ? "oui" : "non"}, siège bébé=${babySeatOption ? "oui" : "non"}`;
+
   const text = [
     "Nouvelle réservation VTC",
     "",
@@ -136,11 +169,11 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     `Arrivée: ${end || "(non précisé)"}`,
     `Arrêts: ${stops.length ? stops.join(" | ") : "(aucun)"}`,
     `Date/Heure: ${dateTimeText || "(non précisé)"}`,
-    `Véhicule: ${vehicle || "(non précisé)"}`,
-    `Options: animal=${petOption ? "oui" : "non"}, siège bébé=${babySeatOption ? "oui" : "non"}`,
+    `Véhicule: ${vehicleText || "(non précisé)"}`,
+    `Options: ${optionsText}`,
     `Option personnalisée: ${customOption || "(aucune)"}`,
     `Distance/Durée: ${distanceText} / ${durationText}`,
-    `Prix: ${priceText}`,
+    `Tarif: ${priceText}`,
     "",
     `Client: ${name || "(non précisé)"}`,
     `Email: ${email || "(non précisé)"}`,
@@ -153,6 +186,16 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     ? `<ul>${stops.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ul>`
     : "<p>(aucun)</p>";
 
+  const htmlOptions = options.length
+    ? `<ul>${options
+        .map((o) => {
+          const name = o.label || o.id || "";
+          const suffix = typeof o.fee === "number" ? ` (+${o.fee.toFixed(2)} €)` : "";
+          return `<li>${escapeHtml(`${name}${suffix}`)}</li>`;
+        })
+        .join("")}</ul>`
+    : `<p>animal=${petOption ? "oui" : "non"}, siège bébé=${babySeatOption ? "oui" : "non"}</p>`;
+
   const html = `
     <h2>Nouvelle réservation VTC</h2>
     <h3>Trajet</h3>
@@ -161,11 +204,12 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     <p><b>Arrêts:</b></p>
     ${htmlStops}
     <p><b>Date/Heure:</b> ${escapeHtml(dateTimeText || "(non précisé)")}</p>
-    <p><b>Véhicule:</b> ${escapeHtml(vehicle || "(non précisé)")}</p>
-    <p><b>Options:</b> animal=${petOption ? "oui" : "non"}, siège bébé=${babySeatOption ? "oui" : "non"}</p>
+    <p><b>Véhicule:</b> ${escapeHtml(vehicleText || "(non précisé)")}</p>
+    <p><b>Options:</b></p>
+    ${htmlOptions}
     <p><b>Option personnalisée:</b> ${escapeHtml(customOption || "(aucune)")}</p>
     <p><b>Distance/Durée:</b> ${escapeHtml(distanceText)} / ${escapeHtml(durationText)}</p>
-    <p><b>Prix:</b> ${escapeHtml(priceText)}</p>
+    <p><b>Tarif:</b> ${escapeHtml(priceText)}</p>
     <h3>Client</h3>
     <p><b>Nom:</b> ${escapeHtml(name || "(non précisé)")}</p>
     <p><b>Email:</b> ${escapeHtml(email || "(non précisé)")}</p>

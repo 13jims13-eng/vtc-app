@@ -7,6 +7,13 @@ let map;
 let stopAutocompletes = [];
 let autocompleteInitStarted = false;
 let _europeBoundsCache = null;
+let _widgetConfigCache = null;
+let _widgetState = {
+  selectedVehicleId: null,
+  selectedVehicleLabel: null,
+  selectedIsQuote: false,
+  selectedTotal: null,
+};
 
 function getWidgetEl() {
   return document.querySelector("#vtc-widget") || document.querySelector("#vtc-smart-booking-widget");
@@ -29,36 +36,381 @@ function parseBoolean(value, fallback) {
   return fallback;
 }
 
-function getPricingConfig(vehicle, stopsCount) {
-  const cfg = getWidgetDataset();
+function safeJsonParse(value) {
+  if (!value || typeof value !== "string") return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
 
-  const defaults = {
-    baseFareBerline: 29.99,
-    pricePerKmBerline: 2.4,
-    baseFareVan: 29.99,
-    pricePerKmVan: 3.5,
-    stopFee: 0,
-    quoteMessage: "Sur devis — merci de nous contacter.",
-    slackEnabled: true,
+function normalizeVehicle(raw) {
+  const id = String(raw?.id || "").trim();
+  const label = String(raw?.label || "").trim();
+  const baseFare = parseNumber(raw?.baseFare, 0);
+  const pricePerKm = parseNumber(raw?.pricePerKm, 0);
+  const quoteOnly = !!raw?.quoteOnly || id === "autre";
+  const imageUrl = String(raw?.imageUrl || "").trim();
+  return {
+    id,
+    label: label || id || "Véhicule",
+    baseFare,
+    pricePerKm,
+    quoteOnly,
+    imageUrl,
+  };
+}
+
+function normalizeOption(raw) {
+  const id = String(raw?.id || "").trim();
+  const label = String(raw?.label || "").trim();
+  const fee = parseNumber(raw?.fee, 0);
+  return {
+    id,
+    label: label || id || "Option",
+    fee,
+  };
+}
+
+function getWidgetConfig() {
+  if (_widgetConfigCache) return _widgetConfigCache;
+
+  const dataset = getWidgetDataset();
+  const rawCfg = safeJsonParse(dataset.config);
+
+  const legacyDefaults = {
+    vehicles: [
+      {
+        id: "berline",
+        label: "Berline",
+        baseFare: parseNumber(dataset.baseFareBerline, 29.99),
+        pricePerKm: parseNumber(dataset.pricePerKmBerline, 2.4),
+        quoteOnly: false,
+        imageUrl: (dataset.vehicleImageBerline || dataset.berlineImg || "").trim(),
+      },
+      {
+        id: "van",
+        label: "Van 7 places",
+        baseFare: parseNumber(dataset.baseFareVan, 29.99),
+        pricePerKm: parseNumber(dataset.pricePerKmVan, 3.5),
+        quoteOnly: false,
+        imageUrl: (dataset.vehicleImageVan || dataset.vanImg || "").trim(),
+      },
+      {
+        id: "autre",
+        label: "Autre (sur devis)",
+        baseFare: 0,
+        pricePerKm: 0,
+        quoteOnly: true,
+        imageUrl: (dataset.vehicleImageAutre || dataset.autreImg || "").trim(),
+      },
+    ],
+    options: [
+      { id: "pet", label: "Animal de compagnie", fee: 20 },
+      { id: "baby_seat", label: "Siège bébé", fee: 15 },
+    ],
   };
 
-  const baseFare =
-    vehicle === "van"
-      ? parseNumber(cfg.baseFareVan, defaults.baseFareVan)
-      : parseNumber(cfg.baseFareBerline, defaults.baseFareBerline);
+  const displayModeRaw = String(rawCfg?.displayMode || "").trim().toUpperCase();
+  const displayMode = displayModeRaw === "B" ? "B" : "A";
+  const stopFee = parseNumber(rawCfg?.stopFee, parseNumber(dataset.stopFee, 0));
+  const quoteMessage = String(
+    rawCfg?.quoteMessage || dataset.quoteMessage || "Sur devis — merci de nous contacter.",
+  ).trim();
+  const slackEnabled = parseBoolean(dataset.slackEnabled, true);
 
-  const pricePerKm =
-    vehicle === "van"
-      ? parseNumber(cfg.pricePerKmVan, defaults.pricePerKmVan)
-      : parseNumber(cfg.pricePerKmBerline, defaults.pricePerKmBerline);
+  const vehiclesRaw = Array.isArray(rawCfg?.vehicles) ? rawCfg.vehicles : legacyDefaults.vehicles;
+  const vehicles = vehiclesRaw.map(normalizeVehicle).filter((v) => v.id);
+  const optionsRaw = Array.isArray(rawCfg?.options) ? rawCfg.options : legacyDefaults.options;
+  const options = optionsRaw.map(normalizeOption).filter((o) => o.id);
 
-  const stopFee = parseNumber(cfg.stopFee, defaults.stopFee);
-  const quoteMessage = (cfg.quoteMessage || defaults.quoteMessage).trim() || defaults.quoteMessage;
-  const slackEnabled = parseBoolean(cfg.slackEnabled, defaults.slackEnabled);
+  _widgetConfigCache = {
+    displayMode,
+    stopFee,
+    quoteMessage,
+    slackEnabled,
+    vehicles: vehicles.length ? vehicles : legacyDefaults.vehicles.map(normalizeVehicle),
+    options,
+  };
 
-  const extraStopsTotal = Math.max(0, stopsCount || 0) * stopFee;
+  return _widgetConfigCache;
+}
 
-  return { baseFare, pricePerKm, stopFee, extraStopsTotal, quoteMessage, slackEnabled };
+function getVehicleById(vehicleId) {
+  const cfg = getWidgetConfig();
+  return cfg.vehicles.find((v) => v.id === vehicleId) || null;
+}
+
+function getPricingConfig(vehicleId, stopsCount) {
+  const cfg = getWidgetConfig();
+  const vehicle = getVehicleById(vehicleId) || normalizeVehicle({ id: vehicleId, label: vehicleId });
+
+  const extraStopsTotal = Math.max(0, stopsCount || 0) * (cfg.stopFee || 0);
+
+  return {
+    baseFare: vehicle.baseFare || 0,
+    pricePerKm: vehicle.pricePerKm || 0,
+    stopFee: cfg.stopFee || 0,
+    extraStopsTotal,
+    quoteMessage: cfg.quoteMessage,
+    slackEnabled: cfg.slackEnabled,
+    quoteOnly: !!vehicle.quoteOnly,
+    vehicleLabel: vehicle.label,
+  };
+}
+
+function getSelectedOptions() {
+  const cfg = getWidgetConfig();
+  const optionsContainer = document.getElementById("vtc-options");
+  if (!optionsContainer) return [];
+
+  const selected = [];
+  optionsContainer.querySelectorAll("input[type=checkbox][data-option-id]").forEach((input) => {
+    const el = input;
+    if (!el.checked) return;
+    const optionId = String(el.dataset.optionId || "").trim();
+    const option = cfg.options.find((o) => o.id === optionId);
+    if (!option) return;
+    selected.push(option);
+  });
+
+  return selected;
+}
+
+function getOptionsTotalFee() {
+  return getSelectedOptions().reduce((sum, o) => sum + (Number.isFinite(o.fee) ? o.fee : 0), 0);
+}
+
+function getSelectedVehicleIdFromUI() {
+  const cfg = getWidgetConfig();
+  if (cfg.displayMode === "B") {
+    return _widgetState.selectedVehicleId;
+  }
+
+  const widget = getWidgetEl() || document;
+  return (
+    widget.querySelector?.('input[name="vehicle"]:checked')?.value ||
+    document.querySelector('input[name="vehicle"]:checked')?.value ||
+    null
+  );
+}
+
+function computeTariffForVehicle({ km, stopsCount, pickupTime, vehicleId }) {
+  const cfg = getWidgetConfig();
+  const vehicle = getVehicleById(vehicleId);
+  if (!vehicle) return { vehicleId, vehicleLabel: vehicleId, isQuote: true, total: 0 };
+
+  const extraStopsTotal = Math.max(0, stopsCount || 0) * (cfg.stopFee || 0);
+  const optionsFee = getOptionsTotalFee();
+
+  if (vehicle.quoteOnly) {
+    return {
+      vehicleId: vehicle.id,
+      vehicleLabel: vehicle.label,
+      isQuote: true,
+      total: 0,
+      quoteMessage: cfg.quoteMessage,
+    };
+  }
+
+  let total = (km || 0) * (vehicle.pricePerKm || 0);
+  total += extraStopsTotal;
+  total += optionsFee;
+
+  // Majoration nuit 22h–05h
+  if (pickupTime) {
+    const hour = parseInt(String(pickupTime).split(":")[0] || "", 10);
+    if (Number.isFinite(hour) && (hour >= 22 || hour < 5)) total *= 1.1;
+  }
+
+  // Remise si > 600 €
+  if (total > 600) total *= 0.9;
+
+  // Minimum (base fare)
+  if (total < (vehicle.baseFare || 0)) total = vehicle.baseFare || 0;
+
+  return {
+    vehicleId: vehicle.id,
+    vehicleLabel: vehicle.label,
+    isQuote: false,
+    total,
+    optionsFee,
+    extraStopsTotal,
+    stopFee: cfg.stopFee || 0,
+  };
+}
+
+function setReserveButtonEnabled(enabled) {
+  const reserveBtn = document.getElementById("reserve-btn");
+  if (!reserveBtn) return;
+  reserveBtn.disabled = !enabled;
+  reserveBtn.style.opacity = enabled ? "1" : "0.45";
+  reserveBtn.style.cursor = enabled ? "pointer" : "not-allowed";
+}
+
+function updateResultTariffDisplay({ isQuote, total, quoteMessage }) {
+  const resultEl = document.getElementById("result");
+  if (!resultEl) return;
+
+  if (isQuote) {
+    resultEl.innerHTML = `Sur devis — <span style="opacity:0.85;">${quoteMessage || getWidgetConfig().quoteMessage}</span>`;
+    return;
+  }
+
+  if (typeof total === "number" && Number.isFinite(total)) {
+    resultEl.innerHTML = `Tarif estimé : <strong>${total.toFixed(2)} €</strong>`;
+    return;
+  }
+
+  resultEl.innerHTML = "Tarif indisponible";
+}
+
+function renderVehiclesAndOptions() {
+  const cfg = getWidgetConfig();
+
+  // Vehicles
+  const vehiclesContainer = document.getElementById("vtc-vehicles");
+  if (vehiclesContainer) {
+    const section = vehiclesContainer.closest?.(".vtc-section");
+    if (cfg.displayMode === "B") {
+      if (section) section.style.display = "none";
+      vehiclesContainer.innerHTML = "";
+    } else {
+      if (section) section.style.display = "";
+      const firstVehicle = cfg.vehicles[0];
+      vehiclesContainer.innerHTML = cfg.vehicles
+        .map((v, idx) => {
+          const checked = idx === 0 ? "checked" : "";
+          return `<label><input type="radio" name="vehicle" value="${String(v.id).replace(/"/g, "&quot;")}" ${checked}> ${String(v.label)}</label>`;
+        })
+        .join("\n");
+
+      _widgetState.selectedVehicleId = firstVehicle?.id || null;
+      _widgetState.selectedVehicleLabel = firstVehicle?.label || null;
+      _widgetState.selectedIsQuote = !!firstVehicle?.quoteOnly;
+
+      vehiclesContainer.querySelectorAll('input[name="vehicle"]').forEach((radio) => {
+        radio.addEventListener("change", () => {
+          const id = getSelectedVehicleIdFromUI();
+          const vehicle = getVehicleById(id);
+          _widgetState.selectedVehicleId = vehicle?.id || id || null;
+          _widgetState.selectedVehicleLabel = vehicle?.label || null;
+          _widgetState.selectedIsQuote = !!vehicle?.quoteOnly;
+
+          if (vehicle?.quoteOnly) {
+            clearPriceUI(true);
+            updateResultTariffDisplay({ isQuote: true, quoteMessage: cfg.quoteMessage });
+          }
+        });
+      });
+    }
+  }
+
+  // Options
+  const optionsContainer = document.getElementById("vtc-options");
+  if (optionsContainer) {
+    optionsContainer.innerHTML = cfg.options
+      .map((o) => {
+        const feeText = Number.isFinite(o.fee) && o.fee !== 0 ? ` (+${o.fee.toFixed(2)} €)` : "";
+        return `
+          <label class="vtc-checkbox">
+            <input type="checkbox" data-option-id="${String(o.id).replace(/"/g, "&quot;")}"> ${String(o.label)}${feeText}
+          </label>
+        `.trim();
+      })
+      .join("\n");
+
+    optionsContainer.querySelectorAll("input[type=checkbox]").forEach((input) => {
+      input.addEventListener("change", () => {
+        // Always refresh summary line-items
+        renderTripSummaryFromLastTrip();
+
+        // If we already calculated and we're in mode B, tariffs must reflect options.
+        if (cfg.displayMode === "B" && typeof window.lastTrip?.distanceKm === "number") {
+          renderTariffsAfterCalculation(
+            window.lastTrip.distanceKm,
+            Array.isArray(window.lastTrip.stops) ? window.lastTrip.stops.length : 0,
+            window.lastTrip.pickupTime || "",
+          );
+        }
+      });
+    });
+  }
+}
+
+function renderTariffsAfterCalculation(km, stopsCount, pickupTime) {
+  const cfg = getWidgetConfig();
+  const tariffsEl = document.getElementById("vtc-tariffs");
+  if (!tariffsEl) return;
+
+  tariffsEl.style.display = "block";
+
+  // Reset selection on each re-render
+  _widgetState.selectedVehicleId = null;
+  _widgetState.selectedVehicleLabel = null;
+  _widgetState.selectedIsQuote = false;
+  _widgetState.selectedTotal = null;
+  setReserveButtonEnabled(false);
+  clearPriceUI(false);
+
+  const lines = cfg.vehicles.map((v) => {
+    const computed = computeTariffForVehicle({ km, stopsCount, pickupTime, vehicleId: v.id });
+    const imageSrc = v.imageUrl || getVehicleDemoImage(v.id);
+    const right = computed.isQuote
+      ? `Sur devis — <span style="opacity:0.85;">${cfg.quoteMessage}</span>`
+      : `<strong>${computed.total.toFixed(2)} €</strong>`;
+
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin-top:10px;background:#fff;">
+        <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+          <img src="${imageSrc}" alt="${String(v.label).replace(/"/g, "&quot;")}" style="width:70px;height:46px;border-radius:10px;border:1px solid #ddd;background:#fff;object-fit:cover;" />
+          <div style="min-width:0;">
+            <div style="font-weight:700;">${v.label}</div>
+            <div style="font-size:14px;opacity:0.85;">${right}</div>
+          </div>
+        </div>
+        <button
+          type="button"
+          data-vehicle-id="${String(v.id).replace(/"/g, "&quot;")}" 
+          style="padding:10px 14px;border-radius:10px;border:1px solid #111;background:#111;color:#fff;cursor:pointer;flex:0 0 auto;"
+        >Choisir</button>
+      </div>
+    `.trim();
+  });
+
+  tariffsEl.innerHTML = `
+    <h3 style="font-size:18px;margin:0 0 10px 0;">Tarifs</h3>
+    ${lines.join("\n")}
+  `.trim();
+
+  tariffsEl.querySelectorAll("button[data-vehicle-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const vehicleId = String(btn.dataset.vehicleId || "").trim();
+      const computed = computeTariffForVehicle({ km, stopsCount, pickupTime, vehicleId });
+
+      _widgetState.selectedVehicleId = computed.vehicleId;
+      _widgetState.selectedVehicleLabel = computed.vehicleLabel;
+      _widgetState.selectedIsQuote = computed.isQuote;
+      _widgetState.selectedTotal = computed.isQuote ? 0 : computed.total;
+
+      updateResultTariffDisplay({
+        isQuote: computed.isQuote,
+        total: computed.isQuote ? null : computed.total,
+        quoteMessage: computed.quoteMessage,
+      });
+
+      if (window.lastTrip) {
+        window.lastTrip.vehicle = computed.vehicleId;
+        window.lastTrip.vehicleLabel = computed.vehicleLabel;
+        window.lastTrip.isQuote = !!computed.isQuote;
+      }
+
+      renderTripSummaryFromLastTrip();
+
+      setReserveButtonEnabled(true);
+    });
+  });
 }
 
 /* --------------------------
@@ -260,12 +612,11 @@ function clearPriceUI(isQuote) {
 }
 
 async function postBookingNotify(payload) {
-  const widget = document.getElementById("vtc-smart-booking-widget");
+  const dataset = getWidgetDataset();
   const configuredEndpoint = (
-    // nouveau nom (préféré)
-    widget?.dataset?.notifyEndpoint ||
-    // compat: ancien attribut (historique)
-    widget?.dataset?.slackEndpoint ||
+    dataset.notifyEndpoint ||
+    dataset.slackEndpoint ||
+    dataset.slackEndpointUrl ||
     ""
   ).trim();
   const defaultEndpoint = "/apps/vtc/api/booking-notify";
@@ -336,8 +687,10 @@ async function postBookingNotify(payload) {
    CALCUL ITINÉRAIRE + PRIX + CARTE + RÉSUMÉ
 --------------------------- */
 function getVehicleLabel(vehicle) {
+  const v = getVehicleById(vehicle);
+  if (v?.label) return v.label;
   if (vehicle === "van") return "Van 7 places";
-  if (vehicle === "autre") return "Sur devis";
+  if (vehicle === "autre") return "Autre (sur devis)";
   return "Berline";
 }
 
@@ -361,16 +714,18 @@ function getVehicleDemoImage(vehicle) {
 }
 
 function getConfiguredVehicleImage(vehicle) {
-  const cfg = getWidgetDataset();
+  const v = getVehicleById(vehicle);
+  if (v?.imageUrl) return v.imageUrl;
 
-  // Prefer new settings-based attrs, fallback to legacy attrs.
-  const berlineImg = (cfg.vehicleImageBerline || cfg.berlineImg || "").trim();
-  const vanImg = (cfg.vehicleImageVan || cfg.vanImg || "").trim();
-  const autreImg = (cfg.vehicleImageAutre || cfg.autreImg || "").trim();
+  const ds = getWidgetDataset();
+  // Compat fallback
+  const berlineImg = (ds.vehicleImageBerline || ds.berlineImg || "").trim();
+  const vanImg = (ds.vehicleImageVan || ds.vanImg || "").trim();
+  const autreImg = (ds.vehicleImageAutre || ds.autreImg || "").trim();
 
-  if (vehicle === "van") return vanImg.trim();
-  if (vehicle === "autre") return autreImg.trim();
-  return berlineImg.trim();
+  if (vehicle === "van") return vanImg;
+  if (vehicle === "autre") return autreImg;
+  return berlineImg;
 }
 
 function getVehicleImageSrc(vehicle) {
@@ -385,30 +740,30 @@ function calculatePrice() {
   const pickupTime = document.getElementById("pickupTime")?.value || "";
   const pickupDate = document.getElementById("pickupDate")?.value || "";
   const resultEl = document.getElementById("result");
+  const cfg = getWidgetConfig();
   const reserveBtn = document.getElementById("reserve-btn");
   const vehicle =
-    widget.querySelector?.('input[name="vehicle"]:checked')?.value ||
-    document.querySelector('input[name="vehicle"]:checked')?.value ||
-    "berline";
-  const isQuote = vehicle === "autre";
-  const quoteMessage = getPricingConfig(vehicle, 0).quoteMessage;
+    cfg.displayMode === "A"
+      ? widget.querySelector?.('input[name="vehicle"]:checked')?.value ||
+        document.querySelector('input[name="vehicle"]:checked')?.value ||
+        cfg.vehicles[0]?.id ||
+        "berline"
+      : null;
 
-  // Nettoyer tout ancien prix (important quand on passe en "Sur devis")
+  const pricing = vehicle ? getPricingConfig(vehicle, 0) : null;
+  const isQuote = !!pricing?.quoteOnly;
+  const quoteMessage = cfg.quoteMessage;
+
+  // Nettoyer tout ancien tarif
   clearPriceUI(isQuote);
 
-  // En mode "Sur devis", on affiche un message clair sans montant
-  if (isQuote) {
-    if (resultEl) {
-      resultEl.innerHTML = `Sur devis — <span style="opacity:0.85;">${quoteMessage}</span>`;
-    }
+  // En mode A, si véhicule sur devis, afficher le message immédiatement
+  if (cfg.displayMode === "A" && isQuote && resultEl) {
+    resultEl.innerHTML = `Sur devis — <span style="opacity:0.85;">${quoteMessage}</span>`;
   }
 
   // Réinitialiser le bouton réserver
-  if (reserveBtn) {
-    reserveBtn.disabled = true;
-    reserveBtn.style.opacity = "0.45";
-    reserveBtn.style.cursor = "not-allowed";
-  }
+  if (reserveBtn) setReserveButtonEnabled(false);
 
   // 1️⃣ Vérif date
   if (!pickupDate) {
@@ -492,86 +847,107 @@ function calculatePrice() {
     const km = totalMeters / 1000;
     const minutes = totalSeconds / 60;
 
-    // Re-lire le véhicule au moment de l'affichage (évite qu'un changement pendant la requête conserve un ancien prix)
-    const vehicleNow =
-      widget.querySelector?.('input[name="vehicle"]:checked')?.value ||
-      document.querySelector('input[name="vehicle"]:checked')?.value ||
-      "berline";
-    const isQuoteNow = vehicleNow === "autre";
+    const cfg = getWidgetConfig();
 
-    // 6️⃣ Tarifs
-    let total = null;
-    const pricing = getPricingConfig(vehicleNow, waypoints.length);
-    if (isQuoteNow) {
-      clearPriceUI(true);
-      total = 0;
-      if (resultEl) {
-        resultEl.innerHTML = `Sur devis — <span style="opacity:0.85;">${pricing.quoteMessage}</span>`;
-      }
-    } else {
-      // Base fare = minimum fare (configurable), price per km configurable
-      total = km * pricing.pricePerKm;
-      total += pricing.extraStopsTotal;
-
-      if (document.getElementById("petOption")?.checked) total += 20;
-      if (document.getElementById("babySeatOption")?.checked) total += 15;
-
-      // Majoration nuit 22h–05h
-      if (pickupTime) {
-        const hour = parseInt(pickupTime.split(":")[0], 10);
-        if (hour >= 22 || hour < 5) total *= 1.10;
-      }
-
-      // Remise si > 600 €
-      if (total > 600) total *= 0.90;
-
-      // Minimum (base fare)
-      if (total < pricing.baseFare) total = pricing.baseFare;
-
-      if (resultEl) {
-        resultEl.innerHTML = `Prix estimé : <strong>${total.toFixed(2)} €</strong>`;
-      }
-
-      window.lastPrice = total;
-    }
-
+    // Persist base trip info (used later by reserve click and mode B selection)
     window.lastTrip = {
       start,
       end,
       stops: waypoints.map((w) => w.location),
       pickupDate,
       pickupTime,
-      vehicle: vehicleNow,
+      vehicle: null,
+      vehicleLabel: null,
       distanceKm: km,
       durationMinutes: Math.round(minutes),
-      isQuote: isQuoteNow,
+      isQuote: false,
     };
+
+    // 6️⃣ Tarifs / Mode A ou B
+    let total = null;
+    let vehicleNow = null;
+    let vehicleLabelNow = null;
+    let isQuoteNow = false;
+
+    const tariffsEl = document.getElementById("vtc-tariffs");
+    if (cfg.displayMode === "B") {
+      if (tariffsEl) tariffsEl.style.display = "block";
+      if (resultEl) resultEl.innerHTML = "";
+      window.lastPrice = null;
+      renderTariffsAfterCalculation(km, waypoints.length, pickupTime);
+      setReserveButtonEnabled(false);
+    } else {
+      if (tariffsEl) tariffsEl.style.display = "none";
+
+      vehicleNow =
+        widget.querySelector?.('input[name="vehicle"]:checked')?.value ||
+        document.querySelector('input[name="vehicle"]:checked')?.value ||
+        cfg.vehicles[0]?.id ||
+        "berline";
+
+      const computed = computeTariffForVehicle({ km, stopsCount: waypoints.length, pickupTime, vehicleId: vehicleNow });
+      vehicleLabelNow = computed.vehicleLabel;
+      isQuoteNow = !!computed.isQuote;
+
+      if (computed.isQuote) {
+        total = 0;
+        clearPriceUI(true);
+        updateResultTariffDisplay({ isQuote: true, quoteMessage: computed.quoteMessage });
+        window.lastPrice = 0;
+      } else {
+        total = computed.total;
+        updateResultTariffDisplay({ isQuote: false, total });
+        window.lastPrice = total;
+      }
+
+      _widgetState.selectedVehicleId = vehicleNow;
+      _widgetState.selectedVehicleLabel = vehicleLabelNow;
+      _widgetState.selectedIsQuote = isQuoteNow;
+      _widgetState.selectedTotal = computed.isQuote ? 0 : total;
+
+      window.lastTrip.vehicle = vehicleNow;
+      window.lastTrip.vehicleLabel = vehicleLabelNow;
+      window.lastTrip.isQuote = isQuoteNow;
+
+      setReserveButtonEnabled(true);
+    }
 
     // 7️⃣ Résumé premium
     const summaryDiv = document.getElementById("route-summary");
     if (summaryDiv) {
       summaryDiv.style.display = "block";
 
-      const extraPricingLine =
-        !isQuoteNow && pricing.stopFee > 0 && waypoints.length
-          ? `<div><strong>Frais arrêts :</strong> ${waypoints.length} × ${pricing.stopFee.toFixed(2)} €</div>`
-          : "";
+      const selectedOptions = getSelectedOptions();
+      const optionsLine = selectedOptions.length
+        ? `<div><strong>Options :</strong> ${selectedOptions
+            .map((o) => `${o.label}${o.fee ? ` (+${o.fee.toFixed(2)} €)` : ""}`)
+            .join(" · ")}</div>`
+        : `<div><strong>Options :</strong> (aucune)</div>`;
+
+      const extraPricingLine = cfg.stopFee > 0 && waypoints.length
+        ? `<div><strong>Frais arrêts :</strong> ${waypoints.length} × ${cfg.stopFee.toFixed(2)} €</div>`
+        : "";
 
       const quoteLine = isQuoteNow
-        ? `<div style="margin-top:10px;"><strong>Sur devis :</strong> ${pricing.quoteMessage}</div>`
+        ? `<div style="margin-top:10px;"><strong>Sur devis :</strong> ${cfg.quoteMessage}</div>`
         : "";
+
+      const vehicleBlock = vehicleNow
+        ? `
+          <div style="display:flex;gap:12px;align-items:center;margin:10px 0 14px 0;">
+            <img
+              src="${getVehicleImageSrc(vehicleNow)}"
+              alt="${getVehicleLabel(vehicleNow)}"
+              style="width:90px;height:60px;border-radius:10px;border:1px solid #ddd;background:#fff;object-fit:cover;"
+            >
+            <div><strong>${getVehicleLabel(vehicleNow)}</strong></div>
+          </div>
+        `.trim()
+        : `<p style="margin:10px 0 0 0;opacity:0.85;">Choisissez un véhicule dans la liste des tarifs.</p>`;
 
       summaryDiv.innerHTML = `
         <h3 style="font-size:18px; margin-bottom:10px;">Résumé du trajet</h3>
-
-        <div style="display:flex;gap:12px;align-items:center;margin:10px 0 14px 0;">
-          <img
-            src="${getVehicleImageSrc(vehicleNow)}"
-            alt="${getVehicleLabel(vehicleNow)}"
-            style="width:90px;height:60px;border-radius:10px;border:1px solid #ddd;background:#fff;object-fit:cover;"
-          >
-          <div><strong>${getVehicleLabel(vehicleNow)}</strong></div>
-        </div>
+        ${vehicleBlock}
 
         <div><strong>Date :</strong> ${pickupDate}</div>
         <div><strong>Heure :</strong> ${pickupTime}</div>
@@ -587,17 +963,11 @@ function calculatePrice() {
 
         <div><strong>Distance :</strong> ${km.toFixed(1)} km</div>
         <div><strong>Durée :</strong> ${Math.round(minutes)} min</div>
-        <div><strong>Véhicule :</strong> ${getVehicleLabel(vehicleNow)}</div>
+        ${vehicleNow ? `<div><strong>Véhicule :</strong> ${getVehicleLabel(vehicleNow)}</div>` : ""}
+        ${optionsLine}
         ${extraPricingLine}
         ${quoteLine}
       `;
-    }
-
-    // 8️⃣ Activation du bouton "Réserver mon trajet"
-    if (reserveBtn) {
-      reserveBtn.disabled = false;
-      reserveBtn.style.opacity = "1";
-      reserveBtn.style.cursor = "pointer";
     }
 
     // Log des infos client (pour debug, futur envoi email / base de données)
@@ -616,10 +986,74 @@ function calculatePrice() {
   });
 }
 
+function renderTripSummaryFromLastTrip() {
+  const summaryDiv = document.getElementById("route-summary");
+  if (!summaryDiv) return;
+  const cfg = getWidgetConfig();
+  const trip = window.lastTrip;
+  if (!trip) return;
+
+  summaryDiv.style.display = "block";
+
+  const vehicleId = trip.vehicle;
+  const vehicleBlock = vehicleId
+    ? `
+      <div style="display:flex;gap:12px;align-items:center;margin:10px 0 14px 0;">
+        <img
+          src="${getVehicleImageSrc(vehicleId)}"
+          alt="${getVehicleLabel(vehicleId)}"
+          style="width:90px;height:60px;border-radius:10px;border:1px solid #ddd;background:#fff;object-fit:cover;"
+        >
+        <div><strong>${getVehicleLabel(vehicleId)}</strong></div>
+      </div>
+    `.trim()
+    : `<p style="margin:10px 0 0 0;opacity:0.85;">Choisissez un véhicule dans la liste des tarifs.</p>`;
+
+  const selectedOptions = getSelectedOptions();
+  const optionsLine = selectedOptions.length
+    ? `<div><strong>Options :</strong> ${selectedOptions
+        .map((o) => `${o.label}${o.fee ? ` (+${o.fee.toFixed(2)} €)` : ""}`)
+        .join(" · ")}</div>`
+    : `<div><strong>Options :</strong> (aucune)</div>`;
+
+  const extraPricingLine = cfg.stopFee > 0 && trip.stops?.length
+    ? `<div><strong>Frais arrêts :</strong> ${trip.stops.length} × ${cfg.stopFee.toFixed(2)} €</div>`
+    : "";
+
+  const quoteLine = trip.isQuote
+    ? `<div style="margin-top:10px;"><strong>Sur devis :</strong> ${cfg.quoteMessage}</div>`
+    : "";
+
+  summaryDiv.innerHTML = `
+    <h3 style="font-size:18px; margin-bottom:10px;">Résumé du trajet</h3>
+    ${vehicleBlock}
+
+    <div><strong>Date :</strong> ${trip.pickupDate || ""}</div>
+    <div><strong>Heure :</strong> ${trip.pickupTime || ""}</div>
+    <br>
+
+    <div><strong>Départ :</strong> ${trip.start || ""}</div>
+    ${(trip.stops || []).map((s, i) => `<div><strong>Arrêt ${i + 1} :</strong> ${s}</div>`).join("")}
+    <div style="margin:6px 0;"><strong>Arrivée :</strong> ${trip.end || ""}</div>
+
+    <hr style="margin:14px 0;">
+
+    <div><strong>Distance :</strong> ${typeof trip.distanceKm === "number" ? trip.distanceKm.toFixed(1) : "(inconnu)"} km</div>
+    <div><strong>Durée :</strong> ${typeof trip.durationMinutes === "number" ? Math.round(trip.durationMinutes) : "(inconnu)"} min</div>
+    ${vehicleId ? `<div><strong>Véhicule :</strong> ${getVehicleLabel(vehicleId)}</div>` : ""}
+    ${optionsLine}
+    ${extraPricingLine}
+    ${quoteLine}
+  `.trim();
+}
+
 /* --------------------------
    BLOQUER LES DATES PASSÉES
 --------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
+  renderVehiclesAndOptions();
+  renderTripSummaryFromLastTrip();
+
   const dateInput = document.getElementById("pickupDate");
   if (dateInput) {
     const today = new Date().toISOString().split("T")[0];
@@ -662,15 +1096,34 @@ document.addEventListener("DOMContentLoaded", () => {
       const end = document.getElementById("end")?.value || "";
       const pickupDate = document.getElementById("pickupDate")?.value || "";
       const pickupTime = document.getElementById("pickupTime")?.value || "";
-      const vehicle =
-        getWidgetEl()?.querySelector?.('input[name="vehicle"]:checked')?.value ||
-        document.querySelector('input[name="vehicle"]:checked')?.value ||
-        "berline";
+      const cfg = getWidgetConfig();
+      const vehicle = getSelectedVehicleIdFromUI();
+      if (cfg.displayMode === "B" && !vehicle) {
+        alert("Merci de choisir un véhicule dans la liste des tarifs.");
+        return;
+      }
 
-      const isQuote = vehicle === "autre";
+      const vehicleObj = getVehicleById(vehicle) || {
+        id: vehicle || "",
+        label: getVehicleLabel(vehicle),
+        quoteOnly: vehicle === "autre",
+      };
+      const isQuote = !!vehicleObj.quoteOnly;
       const stops = Array.from(document.querySelectorAll(".stop-input"))
         .map((i) => i.value.trim())
         .filter(Boolean);
+
+      const selectedOptions = getSelectedOptions();
+      const optionsTotalFee = getOptionsTotalFee();
+
+      // Compat legacy booleans
+      const petOption = selectedOptions.some((o) => o.id === "pet");
+      const babySeatOption = selectedOptions.some((o) => o.id === "baby_seat");
+
+      const kmForPayload = typeof window.lastTrip?.distanceKm === "number" ? window.lastTrip.distanceKm : 0;
+      const computedForPayload = vehicleObj.id
+        ? computeTariffForVehicle({ km: kmForPayload, stopsCount: stops.length, pickupTime, vehicleId: vehicleObj.id })
+        : null;
 
       const trip = {
         start,
@@ -678,12 +1131,22 @@ document.addEventListener("DOMContentLoaded", () => {
         stops,
         pickupDate,
         pickupTime,
-        vehicle,
+        vehicle: vehicleObj.id,
+        vehicleLabel: vehicleObj.label,
         isQuote,
-        petOption: !!document.getElementById("petOption")?.checked,
-        babySeatOption: !!document.getElementById("babySeatOption")?.checked,
+        petOption,
+        babySeatOption,
+        options: selectedOptions.map((o) => ({ id: o.id, label: o.label, fee: o.fee })),
+        optionsTotalFee,
         customOption: document.getElementById("customOption")?.value || "",
-        price: isQuote ? 0 : typeof window.lastPrice === "number" ? window.lastPrice : null,
+        price:
+          isQuote
+            ? 0
+            : computedForPayload && typeof computedForPayload.total === "number"
+              ? computedForPayload.total
+              : typeof window.lastPrice === "number"
+                ? window.lastPrice
+                : null,
         distanceKm: typeof window.lastTrip?.distanceKm === "number" ? window.lastTrip.distanceKm : null,
         durationMinutes:
           typeof window.lastTrip?.durationMinutes === "number" ? window.lastTrip.durationMinutes : null,
@@ -699,7 +1162,7 @@ document.addEventListener("DOMContentLoaded", () => {
         config: {
           bookingEmailTo:
             (getWidgetDataset().bookingEmailTo || "").trim() || undefined,
-          slackEnabled: getPricingConfig(vehicle, stops.length).slackEnabled,
+          slackEnabled: getWidgetConfig().slackEnabled,
         },
       };
 
@@ -717,7 +1180,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      const okMsg = "Demande envoyée ✅";
+      const okMsg = "Demande envoyée";
       const contactErrorEl = document.getElementById("contact-error");
       if (contactErrorEl) contactErrorEl.textContent = okMsg;
       if (consentErrorEl) consentErrorEl.textContent = "";
@@ -732,13 +1195,12 @@ document.addEventListener("DOMContentLoaded", () => {
     : document.querySelectorAll('input[name="vehicle"]')
   ).forEach((radio) => {
     radio.addEventListener("change", () => {
-      if (radio.checked && radio.value === "autre") {
+      const vehicleId = getSelectedVehicleIdFromUI();
+      if (!radio.checked || !vehicleId) return;
+      const pricing = getPricingConfig(vehicleId, 0);
+      if (pricing.quoteOnly) {
         clearPriceUI(true);
-        const pricing = getPricingConfig("autre", 0);
-        const resultEl = document.getElementById("result");
-        if (resultEl) {
-          resultEl.innerHTML = `Sur devis — <span style="opacity:0.85;">${pricing.quoteMessage}</span>`;
-        }
+        updateResultTariffDisplay({ isQuote: true, quoteMessage: pricing.quoteMessage });
       }
     });
   });
