@@ -1070,6 +1070,11 @@ function calculatePrice() {
           ? `<div><strong>Type :</strong> ${leadTimeLabel}</div>`
           : "";
 
+      const leadTimeThresholdLine =
+        cfg.pricingBehavior === "lead_time_pricing"
+          ? `<div style="font-size:13px;opacity:0.75;margin-top:2px;">Seuil : ${Math.round(leadTimeInfo.thresholdMinutes)} min</div>`
+          : "";
+
       const quoteLine = isQuoteNow
         ? `<div style="margin-top:10px;"><strong>Sur devis :</strong> ${cfg.quoteMessage}</div>`
         : "";
@@ -1106,6 +1111,7 @@ function calculatePrice() {
         <div><strong>Distance :</strong> ${km.toFixed(1)} km</div>
         <div><strong>Durée :</strong> ${Math.round(minutes)} min</div>
         ${leadTimeLine}
+        ${leadTimeThresholdLine}
         ${vehicleNow ? `<div><strong>Véhicule :</strong> ${getVehicleLabel(vehicleNow)}</div>` : ""}
         ${optionsLine}
         ${extraPricingLine}
@@ -1168,6 +1174,11 @@ function renderTripSummaryFromLastTrip() {
       ? `<div><strong>Type :</strong> ${trip.leadTimeLabel}</div>`
       : "";
 
+  const leadTimeThresholdLine =
+    cfg.pricingBehavior === "lead_time_pricing" && typeof trip.leadTimeThresholdMinutes === "number"
+      ? `<div style="font-size:13px;opacity:0.75;margin-top:2px;">Seuil : ${Math.round(trip.leadTimeThresholdMinutes)} min</div>`
+      : "";
+
   const quoteLine = trip.isQuote
     ? `<div style="margin-top:10px;"><strong>Sur devis :</strong> ${cfg.quoteMessage}</div>`
     : "";
@@ -1189,6 +1200,7 @@ function renderTripSummaryFromLastTrip() {
     <div><strong>Distance :</strong> ${typeof trip.distanceKm === "number" ? trip.distanceKm.toFixed(1) : "(inconnu)"} km</div>
     <div><strong>Durée :</strong> ${typeof trip.durationMinutes === "number" ? Math.round(trip.durationMinutes) : "(inconnu)"} min</div>
     ${leadTimeLine}
+    ${leadTimeThresholdLine}
     ${vehicleId ? `<div><strong>Véhicule :</strong> ${getVehicleLabel(vehicleId)}</div>` : ""}
     ${optionsLine}
     ${extraPricingLine}
