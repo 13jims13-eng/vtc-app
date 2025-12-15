@@ -17,9 +17,32 @@
     data-stop-fee="{{ block.settings.stop_fee }}"
     data-quote-message="{{ block.settings.quote_message | escape }}"
     data-slack-enabled="{{ block.settings.slack_enabled }}"
+    {% assign vtc_vehicle_image_berline = block.settings.vehicle_image_berline %}
+    {% if vtc_vehicle_image_berline == blank %}{% assign vtc_vehicle_image_berline = block.settings.berline_image %}{% endif %}
+    {% assign vtc_vehicle_image_van = block.settings.vehicle_image_van %}
+    {% if vtc_vehicle_image_van == blank %}{% assign vtc_vehicle_image_van = block.settings.van_image %}{% endif %}
+    {% assign vtc_vehicle_image_autre = block.settings.vehicle_image_autre %}
+    {% if vtc_vehicle_image_autre == blank %}{% assign vtc_vehicle_image_autre = block.settings.autre_image %}{% endif %}
+
         {% comment %}Vehicles/options JSON config (preferred by vtc-booking.js).{% endcomment %}
         {% assign display_mode = block.settings.display_mode | strip %}
         {% if display_mode == blank %}{% assign display_mode = 'A' %}{% endif %}
+
+        {% assign pricing_behavior = block.settings.pricing_behavior | strip %}
+        {% if pricing_behavior == blank %}{% assign pricing_behavior = 'normal_prices' %}{% endif %}
+
+        {% assign lead_time_threshold_minutes = block.settings.lead_time_threshold_minutes %}
+        {% if lead_time_threshold_minutes == blank %}{% assign lead_time_threshold_minutes = 120 %}{% endif %}
+
+        {% assign immediate_label = block.settings.immediate_label | strip %}
+        {% if immediate_label == blank %}{% assign immediate_label = 'Immédiat' %}{% endif %}
+        {% assign reservation_label = block.settings.reservation_label | strip %}
+        {% if reservation_label == blank %}{% assign reservation_label = 'Réservation' %}{% endif %}
+
+        {% assign immediate_surcharge_enabled = block.settings.immediate_surcharge_enabled %}
+        {% assign immediate_base_delta_amount = block.settings.immediate_base_delta_amount %}
+        {% assign immediate_base_delta_percent = block.settings.immediate_base_delta_percent %}
+        {% assign immediate_total_delta_percent = block.settings.immediate_total_delta_percent %}
         {% capture vehicles_json %}
             [
             {% assign first_vehicle = true %}
@@ -76,6 +99,14 @@
         {% capture widget_config_json %}
             {
                 "displayMode": {{ display_mode | json }},
+                "pricingBehavior": {{ pricing_behavior | json }},
+                "leadTimeThresholdMinutes": {{ lead_time_threshold_minutes | json }},
+                "immediateLabel": {{ immediate_label | json }},
+                "reservationLabel": {{ reservation_label | json }},
+                "immediateSurchargeEnabled": {% if immediate_surcharge_enabled %}true{% else %}false{% endif %},
+                "immediateBaseDeltaAmount": {{ immediate_base_delta_amount | default: 0 | json }},
+                "immediateBaseDeltaPercent": {{ immediate_base_delta_percent | default: 0 | json }},
+                "immediateTotalDeltaPercent": {{ immediate_total_delta_percent | default: 0 | json }},
                 "stopFee": {{ block.settings.stop_fee | default: '' | strip | json }},
                 "quoteMessage": {{ block.settings.quote_message | default: '' | strip | json }},
                 "vehicles": {{ vehicles_json | strip_newlines }},
@@ -83,12 +114,6 @@
             }
         {% endcapture %}
         data-config='{{ widget_config_json | strip_newlines | escape }}'
-    {% assign vtc_vehicle_image_berline = block.settings.vehicle_image_berline %}
-    {% if vtc_vehicle_image_berline == blank %}{% assign vtc_vehicle_image_berline = block.settings.berline_image %}{% endif %}
-    {% assign vtc_vehicle_image_van = block.settings.vehicle_image_van %}
-    {% if vtc_vehicle_image_van == blank %}{% assign vtc_vehicle_image_van = block.settings.van_image %}{% endif %}
-    {% assign vtc_vehicle_image_autre = block.settings.vehicle_image_autre %}
-    {% if vtc_vehicle_image_autre == blank %}{% assign vtc_vehicle_image_autre = block.settings.autre_image %}{% endif %}
     data-vehicle-image-berline="{% if vtc_vehicle_image_berline != blank %}{{ vtc_vehicle_image_berline | image_url }}{% endif %}"
     data-vehicle-image-van="{% if vtc_vehicle_image_van != blank %}{{ vtc_vehicle_image_van | image_url }}{% endif %}"
     data-vehicle-image-autre="{% if vtc_vehicle_image_autre != blank %}{{ vtc_vehicle_image_autre | image_url }}{% endif %}"
@@ -246,6 +271,70 @@
                   { "value": "A", "label": "A — Choisir le véhicule avant calcul" },
                   { "value": "B", "label": "B — Afficher tous les tarifs après calcul" }
                 ]
+            },
+
+            {
+                "type": "select",
+                "id": "pricing_behavior",
+                "label": "Comportement pricing global",
+                "default": "normal_prices",
+                "options": [
+                  { "value": "normal_prices", "label": "Normal — Tarifs" },
+                  { "value": "all_quote", "label": "Tout sur devis" },
+                  { "value": "lead_time_pricing", "label": "Immédiat vs Réservation (délai)" }
+                ]
+            },
+
+            {
+                "type": "number",
+                "id": "lead_time_threshold_minutes",
+                "label": "Seuil (minutes) : bascule Immédiat/Réservation",
+                "default": 120,
+                "min": 5,
+                "max": 1440
+            },
+            {
+                "type": "text",
+                "id": "immediate_label",
+                "label": "Libellé Immédiat",
+                "default": "Immédiat"
+            },
+            {
+                "type": "text",
+                "id": "reservation_label",
+                "label": "Libellé Réservation",
+                "default": "Réservation"
+            },
+
+            {
+                "type": "checkbox",
+                "id": "immediate_surcharge_enabled",
+                "label": "Majoration Immédiat activée",
+                "default": true
+            },
+            {
+                "type": "number",
+                "id": "immediate_base_delta_amount",
+                "label": "Immédiat — + montant sur la base (€)",
+                "default": 0,
+                "min": 0,
+                "max": 10000
+            },
+            {
+                "type": "number",
+                "id": "immediate_base_delta_percent",
+                "label": "Immédiat — + % sur la base",
+                "default": 0,
+                "min": 0,
+                "max": 1000
+            },
+            {
+                "type": "number",
+                "id": "immediate_total_delta_percent",
+                "label": "Immédiat — + % sur le total (optionnel)",
+                "default": 0,
+                "min": 0,
+                "max": 1000
             },
         {
             "type": "text",

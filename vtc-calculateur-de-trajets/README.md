@@ -46,6 +46,19 @@ Le message Slack est envoyé uniquement au clic sur **"Réserver mon trajet"** (
 
 Press P to open the URL to your app. Once you click install, you can start development.
 
+### VTC – Pricing (Immédiat vs Réservation)
+
+Dans le **Theme Editor**, sur le bloc du widget (extension `vtc-calculateur`) :
+
+- `Comportement pricing global`:
+  - `Normal — Tarifs`: comportement actuel.
+  - `Tout sur devis`: affiche toujours “Sur devis” (quel que soit le véhicule).
+  - `Immédiat vs Réservation (délai)`: classe le trajet selon le délai avant départ, et peut appliquer une majoration “Immédiat”.
+- `Seuil (minutes)`: si le départ est à moins de ce seuil, le trajet est considéré “Immédiat”, sinon “Réservation”.
+- `Majoration Immédiat` (si activée):
+  - `+ montant sur la base (€)` et/ou `+ % sur la base` (appliqués sur la base du véhicule)
+  - `+ % sur le total` (optionnel, appliqué en dernier)
+
 Local development is powered by [the Shopify CLI](https://shopify.dev/docs/apps/tools/cli). It logs into your partners account, connects to an app, provides environment variables, updates remote config, creates a tunnel and provides commands to generate extensions.
 
 ### Authenticating and querying data

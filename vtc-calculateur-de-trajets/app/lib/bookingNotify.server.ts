@@ -22,6 +22,9 @@ export type BookingNotifyRequestBody = {
     optionsTotalFee?: number;
     customOption?: string;
     price?: number;
+    pricingMode?: string;
+    leadTimeThresholdMinutes?: number | null;
+    surchargesApplied?: unknown;
     distanceKm?: number;
     durationMinutes?: number;
   };
@@ -44,6 +47,9 @@ export type BookingSummary = {
   stops: string[];
   isQuote: boolean;
   price: number | null;
+  pricingMode?: string | null;
+  leadTimeThresholdMinutes?: number | null;
+  surchargesApplied?: unknown;
   distanceKm: number | null;
   durationMinutes: number | null;
   name: string;
@@ -106,6 +112,14 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
   const isQuote = vehicle === "autre" || !!trip?.isQuote;
   const price = typeof trip?.price === "number" ? trip.price : null;
 
+  const pricingModeRaw = cleanText((trip as { pricingMode?: unknown })?.pricingMode);
+  const pricingMode = pricingModeRaw || null;
+  const leadTimeThresholdMinutes =
+    typeof (trip as { leadTimeThresholdMinutes?: unknown })?.leadTimeThresholdMinutes === "number"
+      ? ((trip as { leadTimeThresholdMinutes: number }).leadTimeThresholdMinutes ?? null)
+      : null;
+  const surchargesApplied = (trip as { surchargesApplied?: unknown })?.surchargesApplied ?? null;
+
   const distanceKm = typeof trip?.distanceKm === "number" ? trip.distanceKm : null;
   const durationMinutes = typeof trip?.durationMinutes === "number" ? trip.durationMinutes : null;
 
@@ -151,6 +165,40 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
 
   const vehicleText = vehicleLabel ? `${vehicleLabel}${vehicle ? ` (${vehicle})` : ""}` : vehicle;
 
+  const pricingModeText =
+    pricingMode === "immediate"
+      ? "Immédiat"
+      : pricingMode === "reservation"
+        ? "Réservation"
+        : pricingMode === "all_quote"
+          ? "Tout sur devis"
+          : pricingMode;
+
+  const surchargesText = (() => {
+    if (!surchargesApplied || typeof surchargesApplied !== "object") return "";
+    const obj = surchargesApplied as {
+      kind?: unknown;
+      baseDeltaAmount?: unknown;
+      baseDeltaPercent?: unknown;
+      totalDeltaPercent?: unknown;
+    };
+
+    const kind = cleanText(obj.kind);
+    if (!kind) return "";
+
+    const baseDeltaAmount = typeof obj.baseDeltaAmount === "number" ? obj.baseDeltaAmount : null;
+    const baseDeltaPercent = typeof obj.baseDeltaPercent === "number" ? obj.baseDeltaPercent : null;
+    const totalDeltaPercent = typeof obj.totalDeltaPercent === "number" ? obj.totalDeltaPercent : null;
+
+    const parts: string[] = [];
+    if (typeof baseDeltaAmount === "number" && baseDeltaAmount !== 0) parts.push(`+${baseDeltaAmount.toFixed(2)}€ (base)`);
+    if (typeof baseDeltaPercent === "number" && baseDeltaPercent !== 0) parts.push(`+${baseDeltaPercent}% (base)`);
+    if (typeof totalDeltaPercent === "number" && totalDeltaPercent !== 0) parts.push(`+${totalDeltaPercent}% (total)`);
+
+    if (!parts.length) return kind;
+    return `${kind}: ${parts.join(", ")}`;
+  })();
+
   const optionsText = options.length
     ? options
         .map((o) => {
@@ -169,6 +217,8 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     `Arrivée: ${end || "(non précisé)"}`,
     `Arrêts: ${stops.length ? stops.join(" | ") : "(aucun)"}`,
     `Date/Heure: ${dateTimeText || "(non précisé)"}`,
+    pricingModeText ? `Type: ${pricingModeText}${typeof leadTimeThresholdMinutes === "number" ? ` (seuil ${leadTimeThresholdMinutes} min)` : ""}` : null,
+    surchargesText ? `Majorations: ${surchargesText}` : null,
     `Véhicule: ${vehicleText || "(non précisé)"}`,
     `Options: ${optionsText}`,
     `Option personnalisée: ${customOption || "(aucune)"}`,
@@ -180,7 +230,9 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     `Téléphone: ${phone || "(non précisé)"}`,
     "",
     `Consentements: CGU/Privacy=${termsConsent ? "oui" : "non"}, Marketing=${marketingConsent ? "oui" : "non"}`,
-  ].join("\n");
+  ]
+    .filter((line): line is string => typeof line === "string" && !!line)
+    .join("\n");
 
   const htmlStops = stops.length
     ? `<ul>${stops.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ul>`
@@ -204,6 +256,8 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     <p><b>Arrêts:</b></p>
     ${htmlStops}
     <p><b>Date/Heure:</b> ${escapeHtml(dateTimeText || "(non précisé)")}</p>
+    ${pricingModeText ? `<p><b>Type:</b> ${escapeHtml(pricingModeText)}${typeof leadTimeThresholdMinutes === "number" ? ` (seuil ${escapeHtml(String(leadTimeThresholdMinutes))} min)` : ""}</p>` : ""}
+    ${surchargesText ? `<p><b>Majorations:</b> ${escapeHtml(surchargesText)}</p>` : ""}
     <p><b>Véhicule:</b> ${escapeHtml(vehicleText || "(non précisé)")}</p>
     <p><b>Options:</b></p>
     ${htmlOptions}
@@ -227,6 +281,9 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     stops,
     isQuote,
     price,
+    pricingMode,
+    leadTimeThresholdMinutes,
+    surchargesApplied,
     distanceKm,
     durationMinutes,
     name,
