@@ -17,6 +17,38 @@
     data-stop-fee="{{ block.settings.stop_fee }}"
     data-quote-message="{{ block.settings.quote_message | escape }}"
     data-slack-enabled="{{ block.settings.slack_enabled }}"
+
+    data-options-display-mode="{{ block.settings.options_display_mode | default: 'before_calc' }}"
+    data-option-1-enabled="{% if block.settings.option_1_enabled %}true{% else %}false{% endif %}"
+    data-option-1-id="{{ block.settings.option_1_id | escape }}"
+    data-option-1-label="{{ block.settings.option_1_label | escape }}"
+    data-option-1-type="{{ block.settings.option_1_type | default: 'fixed' }}"
+    data-option-1-amount="{{ block.settings.option_1_amount | default: 0 }}"
+    data-option-2-enabled="{% if block.settings.option_2_enabled %}true{% else %}false{% endif %}"
+    data-option-2-id="{{ block.settings.option_2_id | escape }}"
+    data-option-2-label="{{ block.settings.option_2_label | escape }}"
+    data-option-2-type="{{ block.settings.option_2_type | default: 'fixed' }}"
+    data-option-2-amount="{{ block.settings.option_2_amount | default: 0 }}"
+    data-option-3-enabled="{% if block.settings.option_3_enabled %}true{% else %}false{% endif %}"
+    data-option-3-id="{{ block.settings.option_3_id | escape }}"
+    data-option-3-label="{{ block.settings.option_3_label | escape }}"
+    data-option-3-type="{{ block.settings.option_3_type | default: 'fixed' }}"
+    data-option-3-amount="{{ block.settings.option_3_amount | default: 0 }}"
+    data-option-4-enabled="{% if block.settings.option_4_enabled %}true{% else %}false{% endif %}"
+    data-option-4-id="{{ block.settings.option_4_id | escape }}"
+    data-option-4-label="{{ block.settings.option_4_label | escape }}"
+    data-option-4-type="{{ block.settings.option_4_type | default: 'fixed' }}"
+    data-option-4-amount="{{ block.settings.option_4_amount | default: 0 }}"
+    data-option-5-enabled="{% if block.settings.option_5_enabled %}true{% else %}false{% endif %}"
+    data-option-5-id="{{ block.settings.option_5_id | escape }}"
+    data-option-5-label="{{ block.settings.option_5_label | escape }}"
+    data-option-5-type="{{ block.settings.option_5_type | default: 'fixed' }}"
+    data-option-5-amount="{{ block.settings.option_5_amount | default: 0 }}"
+    data-option-6-enabled="{% if block.settings.option_6_enabled %}true{% else %}false{% endif %}"
+    data-option-6-id="{{ block.settings.option_6_id | escape }}"
+    data-option-6-label="{{ block.settings.option_6_label | escape }}"
+    data-option-6-type="{{ block.settings.option_6_type | default: 'fixed' }}"
+    data-option-6-amount="{{ block.settings.option_6_amount | default: 0 }}"
     {% assign vtc_vehicle_image_berline = block.settings.vehicle_image_berline %}
     {% if vtc_vehicle_image_berline == blank %}{% assign vtc_vehicle_image_berline = block.settings.berline_image %}{% endif %}
     {% assign vtc_vehicle_image_van = block.settings.vehicle_image_van %}
@@ -273,6 +305,18 @@
                 ]
             },
 
+                        {
+                                "type": "select",
+                                "id": "options_display_mode",
+                                "label": "Affichage des options",
+                                "default": "before_calc",
+                                "options": [
+                                    { "value": "before_calc", "label": "Avant calcul" },
+                                    { "value": "after_calc", "label": "Après calcul" },
+                                    { "value": "before_booking", "label": "Au moment de réserver" }
+                                ]
+                        },
+
             {
                 "type": "select",
                 "id": "pricing_behavior",
@@ -493,32 +537,44 @@
                 { "type": "checkbox", "id": "option_1_enabled", "label": "Option #1 activée", "default": true },
                 { "type": "text", "id": "option_1_id", "label": "Option #1 — ID", "default": "pet" },
                 { "type": "text", "id": "option_1_label", "label": "Option #1 — Libellé", "default": "Animal de compagnie" },
-                { "type": "text", "id": "option_1_fee", "label": "Option #1 — Supplément (€)", "default": "20", "info": "Utilisez un point pour les décimales." },
+                { "type": "select", "id": "option_1_type", "label": "Option #1 — Type", "default": "fixed", "options": [ { "value": "fixed", "label": "Fixe" }, { "value": "percent", "label": "%" } ] },
+                { "type": "number", "id": "option_1_amount", "label": "Option #1 — Montant (€, ou %)", "default": 20, "min": 0, "max": 10000 },
+                { "type": "text", "id": "option_1_fee", "label": "Option #1 — Supplément (€) (legacy)", "default": "20", "info": "Ancien champ (fixe). Utilisez plutôt Type/Montant." },
 
                 { "type": "checkbox", "id": "option_2_enabled", "label": "Option #2 activée", "default": true },
                 { "type": "text", "id": "option_2_id", "label": "Option #2 — ID", "default": "baby_seat" },
                 { "type": "text", "id": "option_2_label", "label": "Option #2 — Libellé", "default": "Siège bébé" },
-                { "type": "text", "id": "option_2_fee", "label": "Option #2 — Supplément (€)", "default": "15", "info": "Utilisez un point pour les décimales." },
+                { "type": "select", "id": "option_2_type", "label": "Option #2 — Type", "default": "fixed", "options": [ { "value": "fixed", "label": "Fixe" }, { "value": "percent", "label": "%" } ] },
+                { "type": "number", "id": "option_2_amount", "label": "Option #2 — Montant (€, ou %)", "default": 15, "min": 0, "max": 10000 },
+                { "type": "text", "id": "option_2_fee", "label": "Option #2 — Supplément (€) (legacy)", "default": "15", "info": "Ancien champ (fixe). Utilisez plutôt Type/Montant." },
 
                 { "type": "checkbox", "id": "option_3_enabled", "label": "Option #3 activée", "default": false },
                 { "type": "text", "id": "option_3_id", "label": "Option #3 — ID", "default": "option_3" },
                 { "type": "text", "id": "option_3_label", "label": "Option #3 — Libellé", "default": "Option 3" },
-                { "type": "text", "id": "option_3_fee", "label": "Option #3 — Supplément (€)", "default": "0", "info": "Utilisez un point pour les décimales." },
+                { "type": "select", "id": "option_3_type", "label": "Option #3 — Type", "default": "fixed", "options": [ { "value": "fixed", "label": "Fixe" }, { "value": "percent", "label": "%" } ] },
+                { "type": "number", "id": "option_3_amount", "label": "Option #3 — Montant (€, ou %)", "default": 0, "min": 0, "max": 10000 },
+                { "type": "text", "id": "option_3_fee", "label": "Option #3 — Supplément (€) (legacy)", "default": "0", "info": "Ancien champ (fixe). Utilisez plutôt Type/Montant." },
 
                 { "type": "checkbox", "id": "option_4_enabled", "label": "Option #4 activée", "default": false },
                 { "type": "text", "id": "option_4_id", "label": "Option #4 — ID", "default": "option_4" },
                 { "type": "text", "id": "option_4_label", "label": "Option #4 — Libellé", "default": "Option 4" },
-                { "type": "text", "id": "option_4_fee", "label": "Option #4 — Supplément (€)", "default": "0", "info": "Utilisez un point pour les décimales." },
+                { "type": "select", "id": "option_4_type", "label": "Option #4 — Type", "default": "fixed", "options": [ { "value": "fixed", "label": "Fixe" }, { "value": "percent", "label": "%" } ] },
+                { "type": "number", "id": "option_4_amount", "label": "Option #4 — Montant (€, ou %)", "default": 0, "min": 0, "max": 10000 },
+                { "type": "text", "id": "option_4_fee", "label": "Option #4 — Supplément (€) (legacy)", "default": "0", "info": "Ancien champ (fixe). Utilisez plutôt Type/Montant." },
 
                 { "type": "checkbox", "id": "option_5_enabled", "label": "Option #5 activée", "default": false },
                 { "type": "text", "id": "option_5_id", "label": "Option #5 — ID", "default": "option_5" },
                 { "type": "text", "id": "option_5_label", "label": "Option #5 — Libellé", "default": "Option 5" },
-                { "type": "text", "id": "option_5_fee", "label": "Option #5 — Supplément (€)", "default": "0", "info": "Utilisez un point pour les décimales." },
+                { "type": "select", "id": "option_5_type", "label": "Option #5 — Type", "default": "fixed", "options": [ { "value": "fixed", "label": "Fixe" }, { "value": "percent", "label": "%" } ] },
+                { "type": "number", "id": "option_5_amount", "label": "Option #5 — Montant (€, ou %)", "default": 0, "min": 0, "max": 10000 },
+                { "type": "text", "id": "option_5_fee", "label": "Option #5 — Supplément (€) (legacy)", "default": "0", "info": "Ancien champ (fixe). Utilisez plutôt Type/Montant." },
 
                 { "type": "checkbox", "id": "option_6_enabled", "label": "Option #6 activée", "default": false },
                 { "type": "text", "id": "option_6_id", "label": "Option #6 — ID", "default": "option_6" },
                 { "type": "text", "id": "option_6_label", "label": "Option #6 — Libellé", "default": "Option 6" },
-                { "type": "text", "id": "option_6_fee", "label": "Option #6 — Supplément (€)", "default": "0", "info": "Utilisez un point pour les décimales." },
+                { "type": "select", "id": "option_6_type", "label": "Option #6 — Type", "default": "fixed", "options": [ { "value": "fixed", "label": "Fixe" }, { "value": "percent", "label": "%" } ] },
+                { "type": "number", "id": "option_6_amount", "label": "Option #6 — Montant (€, ou %)", "default": 0, "min": 0, "max": 10000 },
+                { "type": "text", "id": "option_6_fee", "label": "Option #6 — Supplément (€) (legacy)", "default": "0", "info": "Ancien champ (fixe). Utilisez plutôt Type/Montant." },
         {
             "type": "text",
             "id": "notify_endpoint_url",

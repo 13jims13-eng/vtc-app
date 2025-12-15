@@ -15,6 +15,8 @@ let _widgetState = {
   selectedTotal: null,
 };
 
+let _optionsOriginalPlacement = null;
+
 function getWidgetEl() {
   return document.querySelector("#vtc-widget") || document.querySelector("#vtc-smart-booking-widget");
 }
@@ -34,6 +36,12 @@ function parseBoolean(value, fallback) {
   if (["0", "false", "no", "off"].includes(v)) return false;
   if (["1", "true", "yes", "on"].includes(v)) return true;
   return fallback;
+}
+
+function normalizeOptionsDisplayMode(value) {
+  const v = String(value || "").trim();
+  if (v === "before_calc" || v === "after_calc" || v === "before_booking") return v;
+  return "before_calc";
 }
 
 function safeJsonParse(value) {
@@ -111,12 +119,33 @@ function normalizeVehicle(raw) {
 function normalizeOption(raw) {
   const id = String(raw?.id || "").trim();
   const label = String(raw?.label || "").trim();
-  const fee = parseNumber(raw?.fee, 0);
+  const typeRaw = String(raw?.type || "").trim().toLowerCase();
+  const type = typeRaw === "percent" ? "percent" : "fixed";
+  const amount = parseNumber(raw?.amount, parseNumber(raw?.fee, 0));
   return {
     id,
     label: label || id || "Option",
-    fee,
+    type,
+    amount,
   };
+}
+
+function getOptionsFromDataset(dataset) {
+  const options = [];
+  for (let i = 1; i <= 6; i += 1) {
+    const enabled = parseBoolean(dataset[`option${i}Enabled`], false);
+    const label = String(dataset[`option${i}Label`] || "").trim();
+    const typeRaw = String(dataset[`option${i}Type`] || "").trim().toLowerCase();
+    const type = typeRaw === "percent" ? "percent" : "fixed";
+    const amount = parseNumber(dataset[`option${i}Amount`], 0);
+    const id = String(dataset[`option${i}Id`] || "").trim() || `option_${i}`;
+
+    if (!enabled) continue;
+    if (!label) continue;
+
+    options.push({ id, label, type, amount });
+  }
+  return options;
 }
 
 function getWidgetConfig() {
@@ -166,6 +195,10 @@ function getWidgetConfig() {
   ).trim();
   const slackEnabled = parseBoolean(dataset.slackEnabled, true);
 
+  const optionsDisplayMode = normalizeOptionsDisplayMode(
+    rawCfg?.optionsDisplayMode || dataset.optionsDisplayMode,
+  );
+
   const pricingBehavior = normalizePricingBehavior(rawCfg?.pricingBehavior);
   const leadTimeThresholdMinutes = parseNumber(rawCfg?.leadTimeThresholdMinutes, 120);
   const immediateLabel = String(rawCfg?.immediateLabel || "Immédiat").trim();
@@ -177,7 +210,12 @@ function getWidgetConfig() {
 
   const vehiclesRaw = Array.isArray(rawCfg?.vehicles) ? rawCfg.vehicles : legacyDefaults.vehicles;
   const vehicles = vehiclesRaw.map(normalizeVehicle).filter((v) => v.id);
-  const optionsRaw = Array.isArray(rawCfg?.options) ? rawCfg.options : legacyDefaults.options;
+  const datasetOptions = getOptionsFromDataset(dataset);
+  const optionsRaw = datasetOptions.length
+    ? datasetOptions
+    : Array.isArray(rawCfg?.options)
+      ? rawCfg.options
+      : legacyDefaults.options;
   const options = optionsRaw.map(normalizeOption).filter((o) => o.id);
 
   _widgetConfigCache = {
@@ -185,6 +223,7 @@ function getWidgetConfig() {
     stopFee,
     quoteMessage,
     slackEnabled,
+    optionsDisplayMode,
     pricingBehavior,
     leadTimeThresholdMinutes,
     immediateLabel,
@@ -241,8 +280,24 @@ function getSelectedOptions() {
   return selected;
 }
 
-function getOptionsTotalFee() {
-  return getSelectedOptions().reduce((sum, o) => sum + (Number.isFinite(o.fee) ? o.fee : 0), 0);
+function computeSelectedOptionsPricing(baseTotal) {
+  const options = getSelectedOptions();
+  const base = Number.isFinite(baseTotal) ? baseTotal : 0;
+  const applied = options.map((o) => {
+    const type = o.type === "percent" ? "percent" : "fixed";
+    const amount = Number.isFinite(o.amount) ? o.amount : 0;
+    const fee = type === "percent" ? base * (amount / 100) : amount;
+    return {
+      id: o.id,
+      label: o.label,
+      type,
+      amount,
+      fee,
+    };
+  });
+
+  const totalFee = applied.reduce((sum, o) => sum + (Number.isFinite(o.fee) ? o.fee : 0), 0);
+  return { applied, totalFee };
 }
 
 function getSelectedVehicleIdFromUI() {
@@ -265,7 +320,6 @@ function computeTariffForVehicle({ km, stopsCount, pickupTime, pickupDate, vehic
   if (!vehicle) return { vehicleId, vehicleLabel: vehicleId, isQuote: true, total: 0 };
 
   const extraStopsTotal = Math.max(0, stopsCount || 0) * (cfg.stopFee || 0);
-  const optionsFee = getOptionsTotalFee();
 
   if (cfg.pricingBehavior === "all_quote" || vehicle.quoteOnly) {
     return {
@@ -280,7 +334,6 @@ function computeTariffForVehicle({ km, stopsCount, pickupTime, pickupDate, vehic
 
   let total = (km || 0) * (vehicle.pricePerKm || 0);
   total += extraStopsTotal;
-  total += optionsFee;
 
   // Majoration nuit 22h–05h
   if (pickupTime) {
@@ -293,6 +346,9 @@ function computeTariffForVehicle({ km, stopsCount, pickupTime, pickupDate, vehic
 
   // Minimum (base fare)
   if (total < (vehicle.baseFare || 0)) total = vehicle.baseFare || 0;
+
+  const optionsPricing = computeSelectedOptionsPricing(total);
+  total += optionsPricing.totalFee;
 
   let pricingMode = null;
   let surchargesApplied = null;
@@ -332,12 +388,130 @@ function computeTariffForVehicle({ km, stopsCount, pickupTime, pickupDate, vehic
     vehicleLabel: vehicle.label,
     isQuote: false,
     total,
-    optionsFee,
+    optionsFee: optionsPricing.totalFee,
+    appliedOptions: optionsPricing.applied,
     extraStopsTotal,
     stopFee: cfg.stopFee || 0,
     pricingMode,
     surchargesApplied,
   };
+}
+
+function ensureOptionsOriginalPlacement() {
+  if (_optionsOriginalPlacement) return;
+  const optionsContainer = document.getElementById("vtc-options");
+  if (!optionsContainer) return;
+  const section = optionsContainer.closest?.(".vtc-section");
+  if (!section) return;
+  _optionsOriginalPlacement = {
+    section,
+    parent: section.parentNode,
+    nextSibling: section.nextSibling,
+  };
+}
+
+function placeOptionsSection(mode) {
+  ensureOptionsOriginalPlacement();
+  if (!_optionsOriginalPlacement) return;
+
+  const { section, parent, nextSibling } = _optionsOriginalPlacement;
+  const contactWrapper = document.getElementById("contact-wrapper");
+
+  if (mode === "before_booking" && contactWrapper) {
+    if (section.parentNode !== contactWrapper) {
+      contactWrapper.insertBefore(section, contactWrapper.firstChild);
+    }
+    return;
+  }
+
+  if (section.parentNode !== parent) {
+    if (nextSibling && nextSibling.parentNode === parent) {
+      parent.insertBefore(section, nextSibling);
+    } else {
+      parent.appendChild(section);
+    }
+  }
+}
+
+function setOptionsSectionVisible(visible) {
+  const optionsContainer = document.getElementById("vtc-options");
+  const section = optionsContainer?.closest?.(".vtc-section");
+  if (!section) return;
+  section.style.display = visible ? "" : "none";
+}
+
+function applyOptionsDisplayMode(phase) {
+  const cfg = getWidgetConfig();
+  const mode = cfg.optionsDisplayMode || "before_calc";
+
+  placeOptionsSection(mode);
+
+  if (mode === "before_calc") {
+    setOptionsSectionVisible(true);
+    return;
+  }
+
+  if (mode === "after_calc") {
+    setOptionsSectionVisible(phase === "after_calc");
+    return;
+  }
+
+  if (mode === "before_booking") {
+    setOptionsSectionVisible(phase === "before_booking");
+  }
+}
+
+function refreshPricingAfterOptionsChange() {
+  const cfg = getWidgetConfig();
+  const trip = window.lastTrip;
+  if (!trip || typeof trip.distanceKm !== "number") return;
+
+  const km = trip.distanceKm;
+  const stopsCount = Array.isArray(trip.stops) ? trip.stops.length : 0;
+  const pickupTime = trip.pickupTime || "";
+  const pickupDate = trip.pickupDate || "";
+  const leadTimeInfo = getLeadTimeInfo({ pickupDate, pickupTime });
+
+  if (cfg.displayMode === "B") {
+    const keepVehicleId = _widgetState.selectedVehicleId || trip.vehicle || null;
+    renderTariffsAfterCalculation(km, stopsCount, pickupTime, pickupDate, keepVehicleId);
+    return;
+  }
+
+  const vehicleId = getSelectedVehicleIdFromUI() || trip.vehicle;
+  if (!vehicleId) return;
+
+  const computed = computeTariffForVehicle({
+    km,
+    stopsCount,
+    pickupTime,
+    pickupDate,
+    vehicleId,
+    leadTimeInfo,
+  });
+
+  _widgetState.selectedVehicleId = computed.vehicleId;
+  _widgetState.selectedVehicleLabel = computed.vehicleLabel;
+  _widgetState.selectedIsQuote = computed.isQuote;
+  _widgetState.selectedTotal = computed.isQuote ? 0 : computed.total;
+
+  if (window.lastTrip) {
+    window.lastTrip.vehicle = computed.vehicleId;
+    window.lastTrip.vehicleLabel = computed.vehicleLabel;
+    window.lastTrip.isQuote = !!computed.isQuote;
+    window.lastTrip.surchargesApplied = computed.surchargesApplied || null;
+  }
+
+  if (computed.isQuote) {
+    clearPriceUI(true);
+    updateResultTariffDisplay({ isQuote: true, quoteMessage: computed.quoteMessage });
+    window.lastPrice = 0;
+  } else {
+    updateResultTariffDisplay({ isQuote: false, total: computed.total });
+    window.lastPrice = computed.total;
+  }
+
+  renderTripSummaryFromLastTrip();
 }
 
 function setReserveButtonEnabled(enabled) {
@@ -411,7 +585,14 @@ function renderVehiclesAndOptions() {
   if (optionsContainer) {
     optionsContainer.innerHTML = cfg.options
       .map((o) => {
-        const feeText = Number.isFinite(o.fee) && o.fee !== 0 ? ` (+${o.fee.toFixed(2)} €)` : "";
+        const feeText =
+          o.type === "percent"
+            ? o.amount
+              ? ` (+${o.amount}%)`
+              : ""
+            : Number.isFinite(o.amount) && o.amount !== 0
+              ? ` (+${o.amount.toFixed(2)} €)`
+              : "";
         return `
           <label class="vtc-checkbox">
             <input type="checkbox" data-option-id="${String(o.id).replace(/"/g, "&quot;")}"> ${String(o.label)}${feeText}
@@ -423,23 +604,15 @@ function renderVehiclesAndOptions() {
     optionsContainer.querySelectorAll("input[type=checkbox]").forEach((input) => {
       input.addEventListener("change", () => {
         // Always refresh summary line-items
-        renderTripSummaryFromLastTrip();
-
-        // If we already calculated and we're in mode B, tariffs must reflect options.
-        if (cfg.displayMode === "B" && typeof window.lastTrip?.distanceKm === "number") {
-          renderTariffsAfterCalculation(
-            window.lastTrip.distanceKm,
-            Array.isArray(window.lastTrip.stops) ? window.lastTrip.stops.length : 0,
-            window.lastTrip.pickupTime || "",
-            window.lastTrip.pickupDate || "",
-          );
-        }
+        refreshPricingAfterOptionsChange();
       });
     });
   }
+
+  applyOptionsDisplayMode("init");
 }
 
-function renderTariffsAfterCalculation(km, stopsCount, pickupTime, pickupDate) {
+function renderTariffsAfterCalculation(km, stopsCount, pickupTime, pickupDate, keepSelectedVehicleId) {
   const cfg = getWidgetConfig();
   const tariffsEl = document.getElementById("vtc-tariffs");
   if (!tariffsEl) return;
@@ -530,6 +703,38 @@ function renderTariffsAfterCalculation(km, stopsCount, pickupTime, pickupDate) {
       setReserveButtonEnabled(true);
     });
   });
+
+  if (keepSelectedVehicleId) {
+    const computed = computeTariffForVehicle({
+      km,
+      stopsCount,
+      pickupTime,
+      pickupDate,
+      vehicleId: keepSelectedVehicleId,
+      leadTimeInfo,
+    });
+
+    _widgetState.selectedVehicleId = computed.vehicleId;
+    _widgetState.selectedVehicleLabel = computed.vehicleLabel;
+    _widgetState.selectedIsQuote = computed.isQuote;
+    _widgetState.selectedTotal = computed.isQuote ? 0 : computed.total;
+
+    updateResultTariffDisplay({
+      isQuote: computed.isQuote,
+      total: computed.isQuote ? null : computed.total,
+      quoteMessage: computed.quoteMessage,
+    });
+
+    if (window.lastTrip) {
+      window.lastTrip.vehicle = computed.vehicleId;
+      window.lastTrip.vehicleLabel = computed.vehicleLabel;
+      window.lastTrip.isQuote = !!computed.isQuote;
+      window.lastTrip.surchargesApplied = computed.surchargesApplied || window.lastTrip.surchargesApplied || null;
+    }
+
+    renderTripSummaryFromLastTrip();
+    setReserveButtonEnabled(true);
+  }
 }
 
 /* --------------------------
@@ -1049,17 +1254,38 @@ function calculatePrice() {
       setReserveButtonEnabled(true);
     }
 
+    // Options display mode: some modes reveal options only after a successful calculation.
+    applyOptionsDisplayMode("after_calc");
+
     // 7️⃣ Résumé premium
     const summaryDiv = document.getElementById("route-summary");
     if (summaryDiv) {
       summaryDiv.style.display = "block";
 
       const selectedOptions = getSelectedOptions();
-      const optionsLine = selectedOptions.length
-        ? `<div><strong>Options :</strong> ${selectedOptions
-            .map((o) => `${o.label}${o.fee ? ` (+${o.fee.toFixed(2)} €)` : ""}`)
-            .join(" · ")}</div>`
-        : `<div><strong>Options :</strong> (aucune)</div>`;
+      const optionsLine = (() => {
+        if (!selectedOptions.length) return `<div><strong>Options :</strong> (aucune)</div>`;
+        if (!vehicleNow) {
+          return `<div><strong>Options :</strong> ${selectedOptions.map((o) => o.label).join(" · ")}</div>`;
+        }
+
+        const computedForSummary = computeTariffForVehicle({
+          km,
+          stopsCount: waypoints.length,
+          pickupTime,
+          pickupDate,
+          vehicleId: vehicleNow,
+          leadTimeInfo,
+        });
+
+        const applied = Array.isArray(computedForSummary?.appliedOptions) ? computedForSummary.appliedOptions : [];
+        return `<div><strong>Options :</strong> ${(applied.length ? applied : selectedOptions).map((o) => {
+          const label = o.label;
+          const fee = typeof o.fee === "number" ? o.fee : null;
+          if (typeof fee === "number" && fee !== 0) return `${label} (+${fee.toFixed(2)} €)`;
+          return label;
+        }).join(" · ")}</div>`;
+      })();
 
       const extraPricingLine = cfg.stopFee > 0 && waypoints.length
         ? `<div><strong>Frais arrêts :</strong> ${waypoints.length} × ${cfg.stopFee.toFixed(2)} €</div>`
@@ -1159,11 +1385,35 @@ function renderTripSummaryFromLastTrip() {
     : `<p style="margin:10px 0 0 0;opacity:0.85;">Choisissez un véhicule dans la liste des tarifs.</p>`;
 
   const selectedOptions = getSelectedOptions();
-  const optionsLine = selectedOptions.length
-    ? `<div><strong>Options :</strong> ${selectedOptions
-        .map((o) => `${o.label}${o.fee ? ` (+${o.fee.toFixed(2)} €)` : ""}`)
-        .join(" · ")}</div>`
-    : `<div><strong>Options :</strong> (aucune)</div>`;
+  const optionsLine = (() => {
+    if (!selectedOptions.length) return `<div><strong>Options :</strong> (aucune)</div>`;
+
+    const vehicleIdForSummary = trip.vehicle;
+    if (!vehicleIdForSummary || typeof trip.distanceKm !== "number") {
+      return `<div><strong>Options :</strong> ${selectedOptions.map((o) => o.label).join(" · ")}</div>`;
+    }
+
+    const leadTimeInfo = getLeadTimeInfo({ pickupDate: trip.pickupDate || "", pickupTime: trip.pickupTime || "" });
+    const computed = computeTariffForVehicle({
+      km: trip.distanceKm,
+      stopsCount: Array.isArray(trip.stops) ? trip.stops.length : 0,
+      pickupTime: trip.pickupTime || "",
+      pickupDate: trip.pickupDate || "",
+      vehicleId: vehicleIdForSummary,
+      leadTimeInfo,
+    });
+
+    const applied = Array.isArray(computed?.appliedOptions) ? computed.appliedOptions : [];
+
+    return `<div><strong>Options :</strong> ${(applied.length ? applied : selectedOptions)
+      .map((o) => {
+        const label = o.label;
+        const fee = typeof o.fee === "number" ? o.fee : null;
+        if (typeof fee === "number" && fee !== 0) return `${label} (+${fee.toFixed(2)} €)`;
+        return label;
+      })
+      .join(" · ")}</div>`;
+  })();
 
   const extraPricingLine = cfg.stopFee > 0 && trip.stops?.length
     ? `<div><strong>Frais arrêts :</strong> ${trip.stops.length} × ${cfg.stopFee.toFixed(2)} €</div>`
@@ -1234,6 +1484,8 @@ document.addEventListener("DOMContentLoaded", () => {
         contactWrapper.scrollIntoView({ behavior: "smooth", block: "start" });
       }
 
+      applyOptionsDisplayMode("before_booking");
+
       const contact = validateContactForm();
 
       const termsConsent = document.getElementById("termsConsent");
@@ -1274,14 +1526,29 @@ document.addEventListener("DOMContentLoaded", () => {
         .filter(Boolean);
 
       const selectedOptions = getSelectedOptions();
-      const optionsTotalFee = getOptionsTotalFee();
+      const kmForPricing = typeof window.lastTrip?.distanceKm === "number" ? window.lastTrip.distanceKm : 0;
+      const leadTimeInfo = getLeadTimeInfo({ pickupDate, pickupTime });
+      const vehicleForPricing = vehicleObj.id || "";
+
+      const computedForOptions = vehicleForPricing
+        ? computeTariffForVehicle({
+            km: kmForPricing,
+            stopsCount: stops.length,
+            pickupTime,
+            pickupDate,
+            vehicleId: vehicleForPricing,
+            leadTimeInfo,
+          })
+        : null;
+
+      const appliedOptions = Array.isArray(computedForOptions?.appliedOptions) ? computedForOptions.appliedOptions : [];
+      const optionsTotalFee = typeof computedForOptions?.optionsFee === "number" ? computedForOptions.optionsFee : 0;
 
       // Compat legacy booleans
       const petOption = selectedOptions.some((o) => o.id === "pet");
       const babySeatOption = selectedOptions.some((o) => o.id === "baby_seat");
 
       const kmForPayload = typeof window.lastTrip?.distanceKm === "number" ? window.lastTrip.distanceKm : 0;
-      const leadTimeInfo = getLeadTimeInfo({ pickupDate, pickupTime });
       const effectiveComputed = vehicleObj.id
         ? computeTariffForVehicle({
             km: kmForPayload,
@@ -1306,7 +1573,9 @@ document.addEventListener("DOMContentLoaded", () => {
         isQuote: isQuoteEffective,
         petOption,
         babySeatOption,
-        options: selectedOptions.map((o) => ({ id: o.id, label: o.label, fee: o.fee })),
+        options: appliedOptions.length
+          ? appliedOptions
+          : selectedOptions.map((o) => ({ id: o.id, label: o.label, type: o.type, amount: o.amount, fee: 0 })),
         optionsTotalFee,
         customOption: document.getElementById("customOption")?.value || "",
         price: isQuoteEffective
