@@ -8,11 +8,13 @@ let stopAutocompletes = [];
 let autocompleteInitStarted = false;
 let _europeBoundsCache = null;
 let _widgetConfigCache = null;
+let _googleMapsLoadPromise = null;
 let _widgetState = {
   selectedVehicleId: null,
   selectedVehicleLabel: null,
   selectedIsQuote: false,
   selectedTotal: null,
+  customOptionText: "",
 };
 
 let _optionsOriginalPlacement = null;
@@ -23,6 +25,92 @@ function getWidgetEl() {
 
 function getWidgetDataset() {
   return getWidgetEl()?.dataset || {};
+}
+
+function setMapsStatus(text) {
+  const el = document.getElementById("vtc-maps-status");
+  if (!el) return;
+  if (!text) {
+    el.textContent = "";
+    el.style.display = "none";
+    return;
+  }
+  el.textContent = text;
+  el.style.display = "block";
+}
+
+function ensureGoogleMapsLoaded(reason) {
+  if (isGoogleReady()) return Promise.resolve(true);
+  if (_googleMapsLoadPromise) return _googleMapsLoadPromise;
+
+  const dataset = getWidgetDataset();
+  const apiKey = String(dataset.googleMapsApiKey || "").trim();
+  if (!apiKey) {
+    console.warn("google-maps: missing api key (theme setting google_maps_api_key)");
+    setMapsStatus("Google Maps n’est pas configuré.");
+    return Promise.resolve(false);
+  }
+
+  const existing = document.getElementById("vtc-google-maps-js");
+  if (existing) {
+    // Script tag exists, just wait a bit for google to become ready.
+    _googleMapsLoadPromise = new Promise((resolve) => {
+      setMapsStatus("Chargement de Google Maps…");
+      const startedAt = Date.now();
+      const interval = setInterval(() => {
+        if (isGoogleReady()) {
+          clearInterval(interval);
+          setMapsStatus("");
+          resolve(true);
+          return;
+        }
+        if (Date.now() - startedAt > 15000) {
+          clearInterval(interval);
+          setMapsStatus("");
+          resolve(false);
+        }
+      }, 150);
+    });
+    return _googleMapsLoadPromise.then((ok) => {
+      if (!ok) _googleMapsLoadPromise = null;
+      return ok;
+    });
+  }
+
+  _googleMapsLoadPromise = new Promise((resolve) => {
+    setMapsStatus("Chargement de Google Maps…");
+    console.log("google-maps: loading", { reason });
+
+    const script = document.createElement("script");
+    script.id = "vtc-google-maps-js";
+    script.async = true;
+    script.defer = true;
+    // Keep it FR by default; actual restriction is enforced by Places Autocomplete options too.
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&language=fr&region=FR`;
+
+    const timeout = setTimeout(() => {
+      setMapsStatus("");
+      resolve(false);
+    }, 15000);
+
+    script.onload = () => {
+      clearTimeout(timeout);
+      setMapsStatus("");
+      resolve(isGoogleReady());
+    };
+    script.onerror = () => {
+      clearTimeout(timeout);
+      setMapsStatus("");
+      resolve(false);
+    };
+
+    document.head.appendChild(script);
+  });
+
+  return _googleMapsLoadPromise.then((ok) => {
+    if (!ok) _googleMapsLoadPromise = null;
+    return ok;
+  });
 }
 
 function parseNumber(value, fallback) {
@@ -36,6 +124,40 @@ function parseBoolean(value, fallback) {
   if (["0", "false", "no", "off"].includes(v)) return false;
   if (["1", "true", "yes", "on"].includes(v)) return true;
   return fallback;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function getCustomOptionTextFromUI() {
+  const raw = document.getElementById("customOption")?.value || "";
+  return String(raw).trim();
+}
+
+function setCustomOptionText(value) {
+  _widgetState.customOptionText = String(value || "").trim();
+  if (window.lastTrip) {
+    window.lastTrip.customOptionText = _widgetState.customOptionText;
+  }
+}
+
+function normalizeTimeTo5Minutes(value) {
+  const v = String(value || "").trim();
+  if (!v) return "";
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(v);
+  if (!m) return v;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return v;
+  const floored = Math.floor(mm / 5) * 5;
+  const mmStr = String(floored).padStart(2, "0");
+  return `${String(hh).padStart(2, "0")}:${mmStr}`;
 }
 
 function normalizeOptionsDisplayMode(value) {
@@ -131,20 +253,31 @@ function normalizeOption(raw) {
 }
 
 function getOptionsFromDataset(dataset) {
+  const raw = safeJsonParse(dataset.optionsConfig);
+  if (!Array.isArray(raw)) return [];
+
+  const normalizeIdFromLabel = (label, index) => {
+    const cleaned = String(label || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    return cleaned || `option_${index + 1}`;
+  };
+
   const options = [];
-  for (let i = 1; i <= 6; i += 1) {
-    const enabled = parseBoolean(dataset[`option${i}Enabled`], false);
-    const label = String(dataset[`option${i}Label`] || "").trim();
-    const typeRaw = String(dataset[`option${i}Type`] || "").trim().toLowerCase();
-    const type = typeRaw === "percent" ? "percent" : "fixed";
-    const amount = parseNumber(dataset[`option${i}Amount`], 0);
-    const id = String(dataset[`option${i}Id`] || "").trim() || `option_${i}`;
+  raw.forEach((item, index) => {
+    if (!item) return;
 
-    if (!enabled) continue;
-    if (!label) continue;
+    const label = String(item.label || "").trim();
+    if (!label) return;
 
-    options.push({ id, label, type, amount });
-  }
+    const id = String(item.id || "").trim() || normalizeIdFromLabel(label, index);
+    const normalized = normalizeOption({ ...item, id, label });
+    if (!normalized.id) return;
+    options.push(normalized);
+  });
+
   return options;
 }
 
@@ -181,10 +314,7 @@ function getWidgetConfig() {
         imageUrl: (dataset.vehicleImageAutre || dataset.autreImg || "").trim(),
       },
     ],
-    options: [
-      { id: "pet", label: "Animal de compagnie", fee: 20 },
-      { id: "baby_seat", label: "Siège bébé", fee: 15 },
-    ],
+    options: [],
   };
 
   const displayModeRaw = String(rawCfg?.displayMode || "").trim().toUpperCase();
@@ -399,9 +529,9 @@ function computeTariffForVehicle({ km, stopsCount, pickupTime, pickupDate, vehic
 
 function ensureOptionsOriginalPlacement() {
   if (_optionsOriginalPlacement) return;
-  const optionsContainer = document.getElementById("vtc-options");
-  if (!optionsContainer) return;
-  const section = optionsContainer.closest?.(".vtc-section");
+  const section =
+    document.getElementById("vtc-options-section") ||
+    document.getElementById("vtc-options")?.closest?.(".vtc-section");
   if (!section) return;
   _optionsOriginalPlacement = {
     section,
@@ -410,20 +540,13 @@ function ensureOptionsOriginalPlacement() {
   };
 }
 
-function placeOptionsSection(mode) {
+function placeOptionsSection() {
   ensureOptionsOriginalPlacement();
   if (!_optionsOriginalPlacement) return;
 
+  // Contrainte: l'emplacement est géré par le markup Liquid.
+  // On restaure uniquement l'emplacement d'origine (pas de déplacement selon mode).
   const { section, parent, nextSibling } = _optionsOriginalPlacement;
-  const contactWrapper = document.getElementById("contact-wrapper");
-
-  if (mode === "before_booking" && contactWrapper) {
-    if (section.parentNode !== contactWrapper) {
-      contactWrapper.insertBefore(section, contactWrapper.firstChild);
-    }
-    return;
-  }
-
   if (section.parentNode !== parent) {
     if (nextSibling && nextSibling.parentNode === parent) {
       parent.insertBefore(section, nextSibling);
@@ -434,8 +557,9 @@ function placeOptionsSection(mode) {
 }
 
 function setOptionsSectionVisible(visible) {
-  const optionsContainer = document.getElementById("vtc-options");
-  const section = optionsContainer?.closest?.(".vtc-section");
+  const section =
+    document.getElementById("vtc-options-section") ||
+    document.getElementById("vtc-options")?.closest?.(".vtc-section");
   if (!section) return;
   section.style.display = visible ? "" : "none";
 }
@@ -443,6 +567,12 @@ function setOptionsSectionVisible(visible) {
 function applyOptionsDisplayMode(phase) {
   const cfg = getWidgetConfig();
   const mode = cfg.optionsDisplayMode || "before_calc";
+
+  // Si aucune option activée, on masque simplement la liste.
+  if (!Array.isArray(cfg.options) || cfg.options.length === 0) {
+    setOptionsSectionVisible(false);
+    return;
+  }
 
   placeOptionsSection(mode);
 
@@ -459,6 +589,47 @@ function applyOptionsDisplayMode(phase) {
   if (mode === "before_booking") {
     setOptionsSectionVisible(phase === "before_booking");
   }
+}
+
+function scrollToAnchor(anchorId) {
+  const el = document.getElementById(anchorId);
+  if (!el) return;
+  try {
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch {
+    // ignore
+  }
+  // Offset sticky header
+  setTimeout(() => {
+    try {
+      const rect = el.getBoundingClientRect?.();
+      if (rect && Number.isFinite(rect.top)) {
+        const absoluteTop = rect.top + (window.scrollY || 0);
+        window.scrollTo({ top: Math.max(0, absoluteTop - 80), behavior: "smooth" });
+        return;
+      }
+      window.scrollBy(0, -80);
+    } catch {
+      // ignore
+    }
+  }, 250);
+}
+
+function updateSelectedVehicleCardUI(tariffsEl, selectedVehicleId) {
+  if (!tariffsEl) return;
+  tariffsEl.querySelectorAll("[data-vehicle-card]").forEach((card) => {
+    const id = String(card.getAttribute("data-vehicle-card") || "").trim();
+    const isSelected = !!selectedVehicleId && id === selectedVehicleId;
+    card.style.border = isSelected ? "2px solid #111" : "1px solid #e5e5e5";
+    card.style.opacity = isSelected ? "1" : "1";
+
+    const btn = card.querySelector("button[data-vehicle-id]");
+    if (btn) {
+      btn.textContent = isSelected ? "Sélectionné" : "Choisir";
+      btn.disabled = false;
+      btn.style.opacity = "1";
+    }
+  });
 }
 
 function refreshPricingAfterOptionsChange() {
@@ -644,7 +815,7 @@ function renderTariffsAfterCalculation(km, stopsCount, pickupTime, pickupDate, k
       : `<strong>${computed.total.toFixed(2)} €</strong>`;
 
     return `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin-top:10px;background:#fff;">
+      <div data-vehicle-card="${String(v.id).replace(/"/g, "&quot;")}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin-top:10px;background:#fff;" data-vehicle-card>
         <div style="display:flex;align-items:center;gap:12px;min-width:0;">
           <img src="${imageSrc}" alt="${String(v.label).replace(/"/g, "&quot;")}" style="width:70px;height:46px;border-radius:10px;border:1px solid #ddd;background:#fff;object-fit:cover;" />
           <div style="min-width:0;">
@@ -700,7 +871,14 @@ function renderTariffsAfterCalculation(km, stopsCount, pickupTime, pickupDate, k
 
       renderTripSummaryFromLastTrip();
 
+      // Dans ce mode, les options peuvent devoir apparaître seulement après choix véhicule.
+      applyOptionsDisplayMode("after_calc");
+      updateSelectedVehicleCardUI(tariffsEl, computed.vehicleId);
+
       setReserveButtonEnabled(true);
+
+      // Scroll vers la zone Réserver / Résumé
+      scrollToAnchor("vtc-reservation");
     });
   });
 
@@ -733,6 +911,8 @@ function renderTariffsAfterCalculation(km, stopsCount, pickupTime, pickupDate, k
     }
 
     renderTripSummaryFromLastTrip();
+    applyOptionsDisplayMode("after_calc");
+    updateSelectedVehicleCardUI(tariffsEl, computed.vehicleId);
     setReserveButtonEnabled(true);
   }
 }
@@ -839,23 +1019,21 @@ function initAutocomplete() {
   const startInput = document.getElementById("start");
   const endInput = document.getElementById("end");
 
-  if (startInput) {
-    startInput.addEventListener("focus", ensureBaseAutocompletes);
-  }
-  if (endInput) {
-    endInput.addEventListener("focus", ensureBaseAutocompletes);
-  }
+  const bindFocusLoader = (input) => {
+    if (!input) return;
+    input.addEventListener("focus", () => {
+      ensureGoogleMapsLoaded("focus").then((ok) => {
+        if (!ok) return;
+        if (!directionsService) {
+          directionsService = new google.maps.DirectionsService();
+        }
+        ensureBaseAutocompletes();
+      });
+    });
+  };
 
-  const intervalId = setInterval(() => {
-    if (!isGoogleReady()) return;
-
-    if (!directionsService) {
-      directionsService = new google.maps.DirectionsService();
-    }
-
-    ensureBaseAutocompletes();
-    clearInterval(intervalId);
-  }, 200);
+  bindFocusLoader(startInput);
+  bindFocusLoader(endInput);
 }
 
 /* --------------------------
@@ -878,10 +1056,13 @@ function addStopField() {
     stopAutocompletes.push(ac);
   } else {
     input.addEventListener("focus", () => {
-      if (!isGoogleReady() || input._gmAutocomplete) return;
-      const ac = new google.maps.places.Autocomplete(input, getAutocompleteOptions());
-      input._gmAutocomplete = ac;
-      stopAutocompletes.push(ac);
+      if (input._gmAutocomplete) return;
+      ensureGoogleMapsLoaded("stop-focus").then((ok) => {
+        if (!ok || !isGoogleReady() || input._gmAutocomplete) return;
+        const ac = new google.maps.places.Autocomplete(input, getAutocompleteOptions());
+        input._gmAutocomplete = ac;
+        stopAutocompletes.push(ac);
+      });
     });
   }
 }
@@ -957,54 +1138,101 @@ async function postBookingNotify(payload) {
     };
   }
 
-  try {
-    console.log("booking-notify: POST", endpoint);
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+  const requestId = `vtc_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-    const rawText = await resp.text().catch(() => "");
-    const parsed = (() => {
-      try {
-        return rawText ? JSON.parse(rawText) : null;
-      } catch {
-        return null;
+  const fetchOnce = async () => {
+    const controller = new AbortController();
+    const timeoutMs = 15000;
+    const t = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "same-origin",
+        signal: controller.signal,
+      });
+      const rawText = await resp.text().catch(() => "");
+      const parsed = (() => {
+        try {
+          return rawText ? JSON.parse(rawText) : null;
+        } catch {
+          return null;
+        }
+      })();
+
+      return { resp, rawText, parsed };
+    } finally {
+      clearTimeout(t);
+    }
+  };
+
+  const shouldRetryStatus = (status) => [408, 429, 500, 502, 503, 504].includes(status);
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      console.log("booking-notify: POST", { endpoint, requestId, attempt });
+
+      const { resp, rawText, parsed } = await fetchOnce();
+
+      const data = parsed;
+      console.log("booking-notify: response", {
+        endpoint,
+        requestId,
+        attempt,
+        status: resp.status,
+        ok: resp.ok,
+      });
+
+      if (!resp.ok) {
+        const msg =
+          resp.status === 404
+            ? "Endpoint introuvable (App Proxy non configuré ?)"
+            : "Impossible de contacter le serveur…";
+
+        if (attempt < 2 && shouldRetryStatus(resp.status)) {
+          await new Promise((r) => setTimeout(r, 600));
+          continue;
+        }
+
+        return {
+          ok: false,
+          error: msg,
+          detail: data?.error || rawText || null,
+          status: resp.status,
+          requestId,
+        };
       }
-    })();
 
-    console.log("booking-notify: response", {
-      url: endpoint,
-      status: resp.status,
-      ok: resp.ok,
-      json: parsed,
-      body: rawText,
-    });
+      if (data && typeof data === "object") {
+        return data;
+      }
 
-    const data = parsed;
+      return { ok: false, error: "Réponse serveur invalide", detail: rawText || null, requestId };
+    } catch (err) {
+      const isAbort = err && typeof err === "object" && (err.name === "AbortError" || err.code === 20);
+      console.log("booking-notify: fetch error", {
+        endpoint,
+        requestId,
+        attempt,
+        kind: isAbort ? "timeout" : "network",
+      });
 
-    if (!resp.ok) {
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 600));
+        continue;
+      }
+
       return {
         ok: false,
-        error: "Impossible de contacter le serveur…",
-        detail: data?.error || rawText || null,
-        status: resp.status,
+        error: isAbort ? "Le serveur met trop de temps à répondre…" : "Impossible de contacter le serveur…",
+        requestId,
       };
     }
-
-    if (data && typeof data === "object") {
-      return data;
-    }
-
-    return { ok: false, error: "Réponse serveur invalide", detail: rawText || null };
-  } catch (err) {
-    console.log("booking-notify: fetch error", { url: endpoint, err });
-    return {
-      ok: false,
-      error: "Impossible de contacter le serveur…",
-    };
   }
+
+  return { ok: false, error: "Impossible de contacter le serveur…", requestId };
 }
 
 /* --------------------------
@@ -1056,7 +1284,7 @@ function getVehicleImageSrc(vehicle) {
   return getConfiguredVehicleImage(vehicle) || getVehicleDemoImage(vehicle);
 }
 
-function calculatePrice() {
+async function calculatePrice(_retry) {
   const widgetEl = getWidgetEl();
   const widget = widgetEl || document;
   const start = document.getElementById("start")?.value || "";
@@ -1112,8 +1340,13 @@ function calculatePrice() {
     });
 
   if (!isGoogleReady()) {
+    if (!_retry) {
+      if (resultEl) resultEl.innerHTML = "Chargement de Google Maps…";
+      const ok = await ensureGoogleMapsLoaded("calculate");
+      if (ok) return calculatePrice(true);
+    }
     if (resultEl) {
-      resultEl.innerHTML = "Google Maps n’est pas encore prêt, veuillez réessayer.";
+      resultEl.innerHTML = "Google Maps n’est pas disponible. Vérifiez la configuration.";
     }
     return;
   }
@@ -1177,6 +1410,7 @@ function calculatePrice() {
       leadTimeInfo.mode === "immediate" ? cfg.immediateLabel || "Immédiat" : cfg.reservationLabel || "Réservation";
 
     // Persist base trip info (used later by reserve click and mode B selection)
+    setCustomOptionText(getCustomOptionTextFromUI());
     window.lastTrip = {
       start,
       end,
@@ -1188,6 +1422,7 @@ function calculatePrice() {
       distanceKm: km,
       durationMinutes: Math.round(minutes),
       isQuote: false,
+      customOptionText: _widgetState.customOptionText,
       pricingMode: cfg.pricingBehavior === "lead_time_pricing" ? leadTimeInfo.mode : null,
       leadTimeThresholdMinutes: leadTimeInfo.thresholdMinutes,
       leadTimeLabel: cfg.pricingBehavior === "lead_time_pricing" ? leadTimeLabel : null,
@@ -1258,7 +1493,7 @@ function calculatePrice() {
     applyOptionsDisplayMode("after_calc");
 
     // 7️⃣ Résumé premium
-    const summaryDiv = document.getElementById("route-summary");
+    const summaryDiv = document.getElementById("vtc-summary");
     if (summaryDiv) {
       summaryDiv.style.display = "block";
 
@@ -1285,6 +1520,12 @@ function calculatePrice() {
           if (typeof fee === "number" && fee !== 0) return `${label} (+${fee.toFixed(2)} €)`;
           return label;
         }).join(" · ")}</div>`;
+      })();
+
+      const customOptionLine = (() => {
+        const txt = _widgetState.customOptionText;
+        if (!txt) return "";
+        return `<div><strong>Option personnalisée :</strong> ${escapeHtml(txt)}</div>`;
       })();
 
       const extraPricingLine = cfg.stopFee > 0 && waypoints.length
@@ -1340,6 +1581,7 @@ function calculatePrice() {
         ${leadTimeThresholdLine}
         ${vehicleNow ? `<div><strong>Véhicule :</strong> ${getVehicleLabel(vehicleNow)}</div>` : ""}
         ${optionsLine}
+        ${customOptionLine}
         ${extraPricingLine}
         ${quoteLine}
       `;
@@ -1362,7 +1604,7 @@ function calculatePrice() {
 }
 
 function renderTripSummaryFromLastTrip() {
-  const summaryDiv = document.getElementById("route-summary");
+  const summaryDiv = document.getElementById("vtc-summary");
   if (!summaryDiv) return;
   const cfg = getWidgetConfig();
   const trip = window.lastTrip;
@@ -1415,6 +1657,12 @@ function renderTripSummaryFromLastTrip() {
       .join(" · ")}</div>`;
   })();
 
+  const customOptionLine = (() => {
+    const txt = String(trip.customOptionText || _widgetState.customOptionText || "").trim();
+    if (!txt) return "";
+    return `<div><strong>Option personnalisée :</strong> ${escapeHtml(txt)}</div>`;
+  })();
+
   const extraPricingLine = cfg.stopFee > 0 && trip.stops?.length
     ? `<div><strong>Frais arrêts :</strong> ${trip.stops.length} × ${cfg.stopFee.toFixed(2)} €</div>`
     : "";
@@ -1453,6 +1701,7 @@ function renderTripSummaryFromLastTrip() {
     ${leadTimeThresholdLine}
     ${vehicleId ? `<div><strong>Véhicule :</strong> ${getVehicleLabel(vehicleId)}</div>` : ""}
     ${optionsLine}
+    ${customOptionLine}
     ${extraPricingLine}
     ${quoteLine}
   `.trim();
@@ -1464,6 +1713,19 @@ function renderTripSummaryFromLastTrip() {
 document.addEventListener("DOMContentLoaded", () => {
   renderVehiclesAndOptions();
   renderTripSummaryFromLastTrip();
+
+  const customOptionInput = document.getElementById("customOption");
+  if (customOptionInput) {
+    setCustomOptionText(getCustomOptionTextFromUI());
+    customOptionInput.addEventListener("input", () => {
+      setCustomOptionText(getCustomOptionTextFromUI());
+      renderTripSummaryFromLastTrip();
+    });
+    customOptionInput.addEventListener("change", () => {
+      setCustomOptionText(getCustomOptionTextFromUI());
+      renderTripSummaryFromLastTrip();
+    });
+  }
 
   const dateInput = document.getElementById("pickupDate");
   if (dateInput) {
@@ -1525,6 +1787,9 @@ document.addEventListener("DOMContentLoaded", () => {
         .map((i) => i.value.trim())
         .filter(Boolean);
 
+      const customOptionText = getCustomOptionTextFromUI();
+      setCustomOptionText(customOptionText);
+
       const selectedOptions = getSelectedOptions();
       const kmForPricing = typeof window.lastTrip?.distanceKm === "number" ? window.lastTrip.distanceKm : 0;
       const leadTimeInfo = getLeadTimeInfo({ pickupDate, pickupTime });
@@ -1577,7 +1842,7 @@ document.addEventListener("DOMContentLoaded", () => {
           ? appliedOptions
           : selectedOptions.map((o) => ({ id: o.id, label: o.label, type: o.type, amount: o.amount, fee: 0 })),
         optionsTotalFee,
-        customOption: document.getElementById("customOption")?.value || "",
+        customOption: customOptionText,
         price: isQuoteEffective
           ? 0
           : effectiveComputed && typeof effectiveComputed.total === "number"
@@ -1649,13 +1914,16 @@ document.addEventListener("DOMContentLoaded", () => {
   const europeModeEl = document.getElementById("europeMode");
   if (europeModeEl) {
     europeModeEl.addEventListener("change", () => {
-      rebindAutocompletes();
+      ensureGoogleMapsLoaded("europe-toggle").then((ok) => {
+        if (!ok) return;
+        rebindAutocompletes();
+      });
     });
   }
 
   const geoBtn = document.getElementById("geoStartBtn");
   if (geoBtn) {
-    geoBtn.addEventListener("click", (e) => {
+    geoBtn.addEventListener("click", async (e) => {
       e.preventDefault();
 
       const startInput = document.getElementById("start");
@@ -1667,8 +1935,11 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       if (!(window.google && google.maps && google.maps.Geocoder)) {
-        alert("Google Maps n’est pas encore prêt. Réessayez dans quelques secondes.");
-        return;
+        const ok = await ensureGoogleMapsLoaded("geo");
+        if (!ok || !(window.google && google.maps && google.maps.Geocoder)) {
+          alert("Google Maps n’est pas disponible. Vérifiez la configuration.");
+          return;
+        }
       }
 
       navigator.geolocation.getCurrentPosition(
@@ -1700,6 +1971,21 @@ document.addEventListener("DOMContentLoaded", () => {
   // sur les inputs date/heure (capture + stopPropagation).
   const pickupDateInput = document.getElementById("pickupDate");
   const pickupTimeInput = document.getElementById("pickupTime");
+
+  if (pickupTimeInput) {
+    const applyStep = () => {
+      const normalized = normalizeTimeTo5Minutes(pickupTimeInput.value);
+      if (normalized !== pickupTimeInput.value) pickupTimeInput.value = normalized;
+      if (window.lastTrip) {
+        window.lastTrip.pickupTime = pickupTimeInput.value;
+      }
+    };
+    // Round typed/selected values.
+    pickupTimeInput.addEventListener("change", applyStep);
+    pickupTimeInput.addEventListener("blur", applyStep);
+    applyStep();
+  }
+
   [pickupDateInput, pickupTimeInput].filter(Boolean).forEach((input) => {
     ["pointerdown", "mousedown", "mouseup", "touchstart"].forEach((eventName) => {
       input.addEventListener(eventName, (e) => e.stopPropagation(), true);

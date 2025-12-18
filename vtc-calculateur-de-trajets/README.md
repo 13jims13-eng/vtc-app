@@ -105,6 +105,54 @@ For more information on the Shopify Dev MCP please read [the  documentation](htt
 
 ## Deployment
 
+### Render (production) — URL stable
+
+Ce projet est prêt à être déployé sur Render avec une URL stable.
+
+- Blueprint: utilisez [render.yaml](../render.yaml) (le service pointe sur le sous-dossier `vtc-calculateur-de-trajets`).
+- Build command: `npm ci && npm run build`
+- Start command: `npm run docker-start` (exécute `prisma generate` + `prisma migrate deploy` puis démarre le serveur)
+- Port: le serveur écoute sur `process.env.PORT` (fallback 3000 géré par `react-router-serve`).
+
+#### Variables d'env à configurer sur Render
+
+- URL publique:
+  - `APP_URL` (ex: `https://votre-app.onrender.com`) — utilisée par l'app si `SHOPIFY_APP_URL` n'est pas fourni.
+- Shopify (obligatoire):
+  - `SHOPIFY_API_KEY`
+  - `SHOPIFY_API_SECRET`
+  - `SCOPES`
+  - `DATABASE_URL`
+- Email (si notifications email requises):
+  - `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`
+  - `BOOKING_EMAIL_FROM`, `BOOKING_EMAIL_TO`
+- Slack (optionnel):
+  - `SLACK_WEBHOOK_URL`
+
+#### Après déploiement Render (mise à jour Shopify)
+
+Une fois l'URL Render connue, il faut que Shopify (Partners/CLI) pointe sur cette URL, sinon vous verrez typiquement une page "Example Domain" et des erreurs App Proxy.
+
+1) Mettre `APP_URL` (l'URL Render) dans votre shell puis synchroniser le fichier de config:
+
+```bash
+APP_URL=https://votre-app.onrender.com npm run sync:shopify-url
+```
+
+2) Déployer la config Shopify:
+
+```bash
+shopify app deploy
+```
+
+Cela met à jour `application_url` et `redirect_urls` dans `shopify.app.toml` avec:
+
+- `${APP_URL}/auth/callback`
+- `${APP_URL}/auth/shopify/callback`
+- `${APP_URL}/api/auth/callback`
+
+L'App Proxy `/apps/vtc/...` reste inchangé.
+
 ### Application Storage
 
 This template uses [Prisma](https://www.prisma.io/) to store session data, by default using an [SQLite](https://www.sqlite.org/index.html) database.

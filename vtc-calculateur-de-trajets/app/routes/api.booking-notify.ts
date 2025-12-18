@@ -58,7 +58,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     const emailRes = await sendBookingEmail(summary);
     if (!emailRes.ok) {
-      console.error("email ko", { error: emailRes.error });
+      console.error("email ko", { error: emailRes.error, missing: emailRes.missing || [] });
       return jsonResponse({ ok: false, error: emailRes.error }, { status: 500 });
     }
     console.log("email ok", { toSource: emailRes.toSource });
@@ -74,7 +74,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   } else if (slackResult.error === "SLACK_NOT_CONFIGURED" || slackResult.error === "SLACK_DISABLED") {
     console.log("slack skip");
   } else {
-    console.error("slack ko", { error: slackResult.error });
+    console.error("slack ko", { error: slackResult.error, details: slackResult.details });
   }
 
   return jsonResponse({ ok: true }, { status: 200 });

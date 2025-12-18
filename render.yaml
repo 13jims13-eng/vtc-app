@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: vtc-calculateur-de-trajets
+    env: node
+    rootDir: vtc-calculateur-de-trajets
+    plan: starter
+    autoDeploy: true
+    buildCommand: npm ci && npm run build
+    startCommand: npm run docker-start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_URL
+        sync: false
+      - key: SHOPIFY_API_KEY
+        sync: false
+      - key: SHOPIFY_API_SECRET
+        sync: false
+      - key: SCOPES
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_SECURE
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: BOOKING_EMAIL_FROM
+        sync: false
+      - key: BOOKING_EMAIL_TO
+        sync: false
+      - key: SLACK_WEBHOOK_URL
+        sync: false

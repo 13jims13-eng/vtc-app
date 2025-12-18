@@ -2,12 +2,13 @@
 
 client_id = "d25559799e3251c1f0df395fc62733a2"
 name = "VTC – Calculateur de trajets"
+# IMPORTANT (production): avant `shopify app deploy`, synchroniser l'URL Render:
+#   APP_URL=https://<votre-app>.onrender.com npm run sync:shopify-url
 application_url = "https://example.com"
 embedded = true
 
 [build]
 automatically_update_urls_on_dev = true
-include_config_on_deploy = true
 
 [webhooks]
 api_version = "2025-10"
@@ -27,6 +28,7 @@ optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
+# IMPORTANT (production): cette liste est mise à jour par `npm run sync:shopify-url`.
 redirect_urls = [ ]
 
 [app_proxy]

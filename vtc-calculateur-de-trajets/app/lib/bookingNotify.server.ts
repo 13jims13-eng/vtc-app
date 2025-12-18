@@ -221,7 +221,7 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     surchargesText ? `Majorations: ${surchargesText}` : null,
     `Véhicule: ${vehicleText || "(non précisé)"}`,
     `Options: ${optionsText}`,
-    `Option personnalisée: ${customOption || "(aucune)"}`,
+    customOption ? `Option personnalisée: ${customOption}` : null,
     `Distance/Durée: ${distanceText} / ${durationText}`,
     `Tarif: ${priceText}`,
     "",
@@ -261,7 +261,7 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     <p><b>Véhicule:</b> ${escapeHtml(vehicleText || "(non précisé)")}</p>
     <p><b>Options:</b></p>
     ${htmlOptions}
-    <p><b>Option personnalisée:</b> ${escapeHtml(customOption || "(aucune)")}</p>
+    ${customOption ? `<p><b>Option personnalisée:</b> ${escapeHtml(customOption)}</p>` : ""}
     <p><b>Distance/Durée:</b> ${escapeHtml(distanceText)} / ${escapeHtml(durationText)}</p>
     <p><b>Tarif:</b> ${escapeHtml(priceText)}</p>
     <h3>Client</h3>
@@ -328,17 +328,19 @@ export function getEmailConfig(emailToOverride?: string) {
 
   const port = portRaw ? Number(portRaw) : NaN;
 
-  const configured =
-    !!host &&
-    Number.isFinite(port) &&
-    port > 0 &&
-    !!from &&
-    !!to &&
-    !!user &&
-    !!pass;
+  const missing: string[] = [];
+  if (!host) missing.push("SMTP_HOST");
+  if (!portRaw || !Number.isFinite(port) || port <= 0) missing.push("SMTP_PORT");
+  if (!user) missing.push("SMTP_USER");
+  if (!pass) missing.push("SMTP_PASS");
+  if (!from) missing.push("BOOKING_EMAIL_FROM");
+  if (!to) missing.push("BOOKING_EMAIL_TO");
+
+  const configured = missing.length === 0;
 
   return {
     configured,
+    missing,
     host,
     port,
     secure,
@@ -353,7 +355,11 @@ export function getEmailConfig(emailToOverride?: string) {
 export async function sendBookingEmail(summary: BookingSummary) {
   const emailConfig = getEmailConfig(summary.bookingEmailToOverride);
   if (!emailConfig.configured) {
-    return { ok: false as const, error: "EMAIL_NOT_CONFIGURED" as const };
+    return {
+      ok: false as const,
+      error: "EMAIL_NOT_CONFIGURED" as const,
+      missing: emailConfig.missing,
+    };
   }
 
   const transporter = nodemailer.createTransport({
