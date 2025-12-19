@@ -8,6 +8,11 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import prisma from "./db.server";
 
 const appUrl = process.env.SHOPIFY_APP_URL || process.env.APP_URL || "";
+if (process.env.NODE_ENV === "production" && !appUrl) {
+  console.warn(
+    "[config] APP_URL/SHOPIFY_APP_URL manquant: l'app risque de casser l'auth et l'App Proxy en production.",
+  );
+}
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,

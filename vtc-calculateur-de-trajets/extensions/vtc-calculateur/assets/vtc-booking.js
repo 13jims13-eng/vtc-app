@@ -1125,7 +1125,20 @@ async function postBookingNotify(payload) {
     ""
   ).trim();
   const defaultEndpoint = "/apps/vtc/api/booking-notify";
-  const endpoint = configuredEndpoint || defaultEndpoint;
+  const rawEndpoint = configuredEndpoint || defaultEndpoint;
+
+  // IMPORTANT: la réservation doit passer par l'App Proxy Shopify (URL relative côté boutique)
+  // pour éviter CORS et surtout pour que Shopify ajoute la signature (`signature`/`hmac`).
+  // On refuse donc les URLs absolues si quelqu'un a tenté de les configurer dans le thème.
+  const isAbsolute = /^https?:\/\//i.test(rawEndpoint) || rawEndpoint.startsWith("//");
+  const isRelative = rawEndpoint.startsWith("/") && !rawEndpoint.startsWith("//");
+  const endpoint = isRelative && !isAbsolute ? rawEndpoint : defaultEndpoint;
+  if (endpoint !== rawEndpoint) {
+    console.warn("booking-notify: ignoring non-relative endpoint (forcing App Proxy)", {
+      rawEndpoint,
+      endpoint,
+    });
+  }
 
   // Sécurité: ne jamais appeler un Incoming Webhook Slack depuis le storefront.
   // Les secrets (Slack/SMTP) doivent rester côté serveur.
@@ -1186,10 +1199,12 @@ async function postBookingNotify(payload) {
       });
 
       if (!resp.ok) {
-        const msg =
-          resp.status === 404
-            ? "Endpoint introuvable (App Proxy non configuré ?)"
-            : "Impossible de contacter le serveur…";
+        const msg = (() => {
+          if (resp.status === 401) return "Accès refusé (App Proxy / signature invalide).";
+          if (resp.status === 404) return "Endpoint introuvable (App Proxy non configuré ?)";
+          if (resp.status >= 400 && resp.status < 500) return "Requête refusée par le serveur.";
+          return "Impossible de contacter le serveur…";
+        })();
 
         if (attempt < 2 && shouldRetryStatus(resp.status)) {
           await new Promise((r) => setTimeout(r, 600));
@@ -1874,15 +1889,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const res = await postBookingNotify(payload);
       if (!res?.ok) {
-        const msg =
-          res?.error ||
-          "Impossible de contacter le serveur…";
+        const msg = (() => {
+          const base = res?.error || "Impossible de contacter le serveur…";
+          const status = typeof res?.status === "number" ? res.status : null;
+          const requestId = res?.requestId ? ` (réf: ${res.requestId})` : "";
+          if (status) return `${base} (code ${status})${requestId}`;
+          return `${base}${requestId}`;
+        })();
 
         const contactErrorEl = document.getElementById("contact-error");
         if (contactErrorEl) contactErrorEl.textContent = msg;
         if (consentErrorEl) consentErrorEl.textContent = msg;
 
-        alert(msg);
         return;
       }
 
@@ -1891,7 +1909,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (contactErrorEl) contactErrorEl.textContent = okMsg;
       if (consentErrorEl) consentErrorEl.textContent = "";
 
-      alert(okMsg);
+      // Message visible dans le formulaire (pas de pop-up)
     });
   }
 

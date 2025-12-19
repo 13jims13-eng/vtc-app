@@ -1,8 +1,27 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { action as slackBookingAction } from "./api.slack-booking";
+import { validateAppProxyHmac } from "../lib/appProxyHmac.server";
 
 export const loader = async (args: LoaderFunctionArgs) => {
+  const hmacCheck = validateAppProxyHmac(args.request);
+  if (!hmacCheck.ok) {
+    const requestUrl = new URL(args.request.url);
+    console.error("appProxy signature ko (loader)", {
+      error: hmacCheck.error,
+      path: requestUrl.pathname,
+      shop: requestUrl.searchParams.get("shop"),
+    });
+
+    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+      status: hmacCheck.status,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
   try {
     await authenticate.public.appProxy(args.request);
   } catch (err) {
@@ -38,6 +57,23 @@ export const action = async (args: ActionFunctionArgs) => {
     hasSignature: requestUrl.searchParams.has("signature"),
     hasTimestamp: requestUrl.searchParams.has("timestamp"),
   });
+
+  const hmacCheck = validateAppProxyHmac(args.request);
+  if (!hmacCheck.ok) {
+    console.error("appProxy signature ko (action)", {
+      error: hmacCheck.error,
+      path: requestUrl.pathname,
+      shop: requestUrl.searchParams.get("shop"),
+    });
+
+    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+      status: hmacCheck.status,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    });
+  }
 
   try {
     await authenticate.public.appProxy(args.request);
