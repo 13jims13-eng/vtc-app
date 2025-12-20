@@ -1,7 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { action as bookingNotifyAction } from "./api.booking-notify";
-import { validateAppProxyHmac } from "../lib/appProxyHmac.server";
 
 export const action = async (args: ActionFunctionArgs) => {
   const requestUrl = new URL(args.request.url);
@@ -13,23 +12,6 @@ export const action = async (args: ActionFunctionArgs) => {
     hasTimestamp: requestUrl.searchParams.has("timestamp"),
   });
 
-  const hmacCheck = validateAppProxyHmac(args.request);
-  if (!hmacCheck.ok) {
-    console.error("notify proxy signature ko", {
-      error: hmacCheck.error,
-      shop: requestUrl.searchParams.get("shop"),
-      hasSignature: requestUrl.searchParams.has("signature") || requestUrl.searchParams.has("hmac"),
-    });
-
-    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-      status: hmacCheck.status,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-      },
-    });
-  }
-
   try {
     await authenticate.public.appProxy(args.request);
   } catch (err) {
@@ -37,7 +19,7 @@ export const action = async (args: ActionFunctionArgs) => {
 
     const stack = err instanceof Error ? err.stack : String(err);
     console.error("notify auth error", stack);
-    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+    return new Response(JSON.stringify({ ok: false, error: "Unauthorized", reason: "APP_PROXY_AUTH_FAILED" }), {
       status: 401,
       headers: {
         "Content-Type": "application/json; charset=utf-8",

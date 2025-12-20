@@ -1,27 +1,8 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { action as slackBookingAction } from "./api.slack-booking";
-import { validateAppProxyHmac } from "../lib/appProxyHmac.server";
 
 export const loader = async (args: LoaderFunctionArgs) => {
-  const hmacCheck = validateAppProxyHmac(args.request);
-  if (!hmacCheck.ok) {
-    const requestUrl = new URL(args.request.url);
-    console.error("appProxy signature ko (loader)", {
-      error: hmacCheck.error,
-      path: requestUrl.pathname,
-      shop: requestUrl.searchParams.get("shop"),
-    });
-
-    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-      status: hmacCheck.status,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-      },
-    });
-  }
-
   try {
     await authenticate.public.appProxy(args.request);
   } catch (err) {
@@ -30,7 +11,7 @@ export const loader = async (args: LoaderFunctionArgs) => {
     const stack = err instanceof Error ? err.stack : String(err);
     console.error("appProxy auth error (loader)", stack);
 
-    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+    return new Response(JSON.stringify({ ok: false, error: "Unauthorized", reason: "APP_PROXY_AUTH_FAILED" }), {
       status: 401,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
@@ -58,23 +39,6 @@ export const action = async (args: ActionFunctionArgs) => {
     hasTimestamp: requestUrl.searchParams.has("timestamp"),
   });
 
-  const hmacCheck = validateAppProxyHmac(args.request);
-  if (!hmacCheck.ok) {
-    console.error("appProxy signature ko (action)", {
-      error: hmacCheck.error,
-      path: requestUrl.pathname,
-      shop: requestUrl.searchParams.get("shop"),
-    });
-
-    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
-      status: hmacCheck.status,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-      },
-    });
-  }
-
   try {
     await authenticate.public.appProxy(args.request);
   } catch (err) {
@@ -83,7 +47,7 @@ export const action = async (args: ActionFunctionArgs) => {
     const stack = err instanceof Error ? err.stack : String(err);
     console.error("appProxy auth error (action)", stack);
 
-    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+    return new Response(JSON.stringify({ ok: false, error: "Unauthorized", reason: "APP_PROXY_AUTH_FAILED" }), {
       status: 401,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
