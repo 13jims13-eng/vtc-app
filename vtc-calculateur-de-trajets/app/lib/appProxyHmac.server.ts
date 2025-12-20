@@ -26,8 +26,9 @@ function safeEqualHex(a: string, b: string) {
  *
  * Algorithm (Shopify App Proxy):
  * - Take all query params except `signature`/`hmac`
- * - Sort by key
- * - Concatenate as `key=value` with NO separators
+ * - If a key appears multiple times, join its values with a comma (in the original order)
+ * - Sort by the full `key=value` string (lexicographically)
+ * - Concatenate with NO separators
  * - HMAC-SHA256 using SHOPIFY_API_SECRET, hex digest
  */
 export function validateAppProxyHmac(request: Request): AppProxyValidationResult {
@@ -44,15 +45,23 @@ export function validateAppProxyHmac(request: Request): AppProxyValidationResult
     return { ok: false, status: 500, error: "SHOPIFY_API_SECRET_MISSING" };
   }
 
-  const pairs: Array<[string, string]> = [];
-  url.searchParams.forEach((value, key) => {
-    if (key === "signature" || key === "hmac") return;
-    pairs.push([key, value]);
+  const valuesByKey = new Map<string, string[]>();
+  for (const [key, value] of url.searchParams.entries()) {
+    if (key === "signature" || key === "hmac") continue;
+    const existing = valuesByKey.get(key);
+    if (existing) {
+      existing.push(value);
+    } else {
+      valuesByKey.set(key, [value]);
+    }
+  }
+
+  const parts = Array.from(valuesByKey.entries()).map(([key, values]) => {
+    return `${key}=${values.join(",")}`;
   });
+  parts.sort((a, b) => a.localeCompare(b));
 
-  pairs.sort(([a], [b]) => a.localeCompare(b));
-
-  const message = pairs.map(([k, v]) => `${k}=${v}`).join("");
+  const message = parts.join("");
   const computed = crypto.createHmac("sha256", secret).update(message).digest("hex");
 
   if (!safeEqualHex(computed, signature)) {
