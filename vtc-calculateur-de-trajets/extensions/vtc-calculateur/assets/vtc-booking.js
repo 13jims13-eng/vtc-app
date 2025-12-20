@@ -1202,6 +1202,7 @@ async function postBookingNotify(payload) {
         attempt,
         status: resp.status,
         ok: resp.ok,
+        body: data || (rawText ? rawText.slice(0, 800) : null),
       });
 
       if (!resp.ok) {
@@ -1222,6 +1223,8 @@ async function postBookingNotify(payload) {
           ok: false,
           error: msg,
           detail: data?.error || rawText || null,
+          reason: data?.reason || null,
+          serverRequestId: data?.requestId || null,
           status: resp.status,
           requestId,
         };
