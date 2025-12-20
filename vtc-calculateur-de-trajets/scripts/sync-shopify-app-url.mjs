@@ -41,6 +41,27 @@ function replaceTomlArray(contents, key, values) {
   return contents.replace(pattern, rendered);
 }
 
+function replaceTomlScalarInSection(contents, section, key, value) {
+  const sectionHeader = `[${section}]`;
+  const start = contents.search(new RegExp(`^\\[${section.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\]\\s*$`, "m"));
+  if (start < 0) {
+    throw new Error(`Section TOML introuvable: ${sectionHeader}`);
+  }
+
+  const afterStart = contents.slice(start);
+  const nextSectionMatch = afterStart.slice(sectionHeader.length).match(/^\n\[[^\]]+\]\s*$/m);
+  const end = nextSectionMatch ? start + sectionHeader.length + nextSectionMatch.index : contents.length;
+  const sectionText = contents.slice(start, end);
+
+  const keyPattern = new RegExp(`^${key}\\s*=\\s*"[^"]*"\\s*$`, "m");
+  if (!keyPattern.test(sectionText)) {
+    throw new Error(`Clé TOML introuvable dans ${sectionHeader}: ${key}`);
+  }
+
+  const updatedSectionText = sectionText.replace(keyPattern, `${key} = "${value}"`);
+  return contents.slice(0, start) + updatedSectionText + contents.slice(end);
+}
+
 const appUrl = normalizeAppUrl(process.env.APP_URL);
 if (!appUrl) {
   console.error("APP_URL manquant. Exemple: https://your-app.onrender.com");
@@ -60,9 +81,11 @@ contents = replaceTomlArray(contents, "redirect_urls", [
   `${appUrl}/auth/shopify/callback`,
   `${appUrl}/api/auth/callback`,
 ]);
+contents = replaceTomlScalarInSection(contents, "app_proxy", "url", `${appUrl}/apps/vtc`);
 
 fs.writeFileSync(tomlPath, contents, "utf8");
 console.log("shopify.app.toml mis à jour", {
   application_url: appUrl,
   redirect_urls: 3,
+  app_proxy_url: `${appUrl}/apps/vtc`,
 });

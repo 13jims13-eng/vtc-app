@@ -69,6 +69,7 @@ Valeurs attendues:
   - `"https://vtc-app-calculator.onrender.com/auth/shopify/callback"`
   - `"https://vtc-app-calculator.onrender.com/api/auth/callback"`
   `]`
+- `[app_proxy] url = "https://vtc-app-calculator.onrender.com/apps/vtc"`
 
 ## 4) App Proxy: mapping recommandé
 
@@ -85,7 +86,19 @@ Cela signifie:
 Routes implémentées côté app:
 
 - Healthcheck: `GET /healthz`
+- Healthcheck App Proxy: `GET /apps/vtc/healthz`
 - Booking notify App Proxy: `POST /apps/vtc/api/booking-notify`
+
+## 6) Thème Shopify: bloc + App embed
+
+Après `shopify app deploy` (et si besoin réinstallation de l’app sur la boutique), aller dans:
+
+- **Online Store** → **Themes** → **Customize**
+
+Puis:
+
+- Ajouter le bloc/section dans **Ajouter une section** → **Apps** → **VTC Smart Booking**
+- (Optionnel) Activer l’embed dans **App embeds** → **VTC Smart Booking (App embed)**
 
 ## 5) Sécurité: signature App Proxy
 
@@ -94,13 +107,17 @@ Les routes App Proxy valident la signature Shopify via HMAC avant traitement.
 - Si la signature est absente/invalide: `401 Unauthorized`
 - Si `SHOPIFY_API_SECRET` est manquant côté serveur: `500` avec logs explicites (sans afficher le secret)
 
-## 6) Debug rapide (prod)
+## 7) Debug rapide (prod)
 
 1) Vérifier healthcheck:
 
 - `GET https://vtc-app-calculator.onrender.com/healthz` doit répondre `200 { ok: true, ... }`
 
-2) Vérifier App Proxy:
+2) Vérifier App Proxy (healthcheck):
+
+- `GET https://<shop>.myshopify.com/apps/vtc/healthz` doit répondre `200 { ok: true, now: ... }`
+
+3) Vérifier App Proxy:
 
 - Depuis la boutique, déclencher l'appel du thème: `POST /apps/vtc/api/booking-notify`
 - Sur Render, logs attendus:
