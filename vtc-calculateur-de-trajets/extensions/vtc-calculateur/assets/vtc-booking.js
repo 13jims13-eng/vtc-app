@@ -1206,6 +1206,7 @@ async function postBookingNotify(payload) {
 
       if (!resp.ok) {
         const msg = (() => {
+          if (resp.status === 400 && data?.error) return String(data.error);
           if (resp.status === 401) return "Accès refusé (App Proxy / signature invalide).";
           if (resp.status === 404) return "Endpoint introuvable (App Proxy non configuré ?)";
           if (resp.status >= 400 && resp.status < 500) return "Requête refusée par le serveur.";

@@ -19,20 +19,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   console.log("notify hit", { method: request.method, path: requestUrl.pathname });
 
   if (request.method !== "POST") {
-    return jsonResponse({ ok: false, error: "Method not allowed" }, { status: 500 });
+    return jsonResponse({ ok: false, error: "Method not allowed" }, { status: 405 });
   }
 
   let body: BookingNotifyRequestBody;
   try {
     body = (await request.json()) as BookingNotifyRequestBody;
   } catch {
-    return jsonResponse({ ok: false, error: "JSON invalide" }, { status: 500 });
+    return jsonResponse({ ok: false, error: "JSON invalide" }, { status: 400 });
   }
 
   const summary = buildBookingSummary(body);
   const validationError = validateBookingSummary(summary);
   if (validationError) {
-    return jsonResponse({ ok: false, error: validationError }, { status: 500 });
+    return jsonResponse({ ok: false, error: validationError }, { status: 400 });
   }
 
   const slackEnabled = body?.config?.slackEnabled !== false;
