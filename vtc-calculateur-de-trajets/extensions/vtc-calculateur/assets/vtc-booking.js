@@ -1167,7 +1167,7 @@ async function postBookingNotify(payload) {
     try {
       const resp = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Request-Id": requestId },
         body: JSON.stringify(payload),
         credentials: "same-origin",
         signal: controller.signal,
