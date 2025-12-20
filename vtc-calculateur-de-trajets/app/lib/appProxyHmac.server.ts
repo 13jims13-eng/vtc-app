@@ -40,7 +40,7 @@ export function validateAppProxyHmac(request: Request): AppProxyValidationResult
     return { ok: false, status: 401, error: "APP_PROXY_SIGNATURE_MISSING" };
   }
 
-  const secret = process.env.SHOPIFY_API_SECRET || "";
+  const secret = process.env.SHOPIFY_API_SECRET_KEY || process.env.SHOPIFY_API_SECRET || "";
   if (!secret) {
     return { ok: false, status: 500, error: "SHOPIFY_API_SECRET_MISSING" };
   }
