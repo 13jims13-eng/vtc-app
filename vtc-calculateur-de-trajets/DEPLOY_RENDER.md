@@ -69,7 +69,7 @@ Valeurs attendues:
   - `"https://vtc-app-calculator.onrender.com/auth/shopify/callback"`
   - `"https://vtc-app-calculator.onrender.com/api/auth/callback"`
   `]`
-- `[app_proxy] url = "https://vtc-app-calculator.onrender.com/apps/vtc"`
+- `[app_proxy] url = "/apps/vtc"` (Shopify proxy vers `application_url` + ce chemin)
 
 ## 4) App Proxy: mapping recommandé
 

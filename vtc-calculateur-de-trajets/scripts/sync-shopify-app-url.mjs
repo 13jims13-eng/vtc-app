@@ -81,11 +81,11 @@ contents = replaceTomlArray(contents, "redirect_urls", [
   `${appUrl}/auth/shopify/callback`,
   `${appUrl}/api/auth/callback`,
 ]);
-contents = replaceTomlScalarInSection(contents, "app_proxy", "url", `${appUrl}/apps/vtc`);
+contents = replaceTomlScalarInSection(contents, "app_proxy", "url", "/apps/vtc");
 
 fs.writeFileSync(tomlPath, contents, "utf8");
 console.log("shopify.app.toml mis à jour", {
   application_url: appUrl,
   redirect_urls: 3,
-  app_proxy_url: `${appUrl}/apps/vtc`,
+  app_proxy_url: "/apps/vtc",
 });

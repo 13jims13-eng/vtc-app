@@ -35,6 +35,6 @@ redirect_urls = [
   "https://vtc-app-calculator.onrender.com/api/auth/callback",
 ]
 [app_proxy]
-url = "https://vtc-app-calculator.onrender.com/apps/vtc"
+url = "/apps/vtc"
 subpath = "vtc"
 prefix = "apps"
