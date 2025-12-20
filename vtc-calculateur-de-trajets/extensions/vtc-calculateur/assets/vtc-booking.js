@@ -1,6 +1,12 @@
 /* global google */
 // vtc-booking.js - Version B1 (formulaire toujours visible)
 
+(function () {
+  // This asset can be injected by both an app embed and a block.
+  // Avoid crashing on double-load and avoid double-binding listeners.
+  if (window.__VTC_BOOKING_LOADED__) return;
+  window.__VTC_BOOKING_LOADED__ = true;
+
 let directionsService;
 let directionsRenderer;
 let map;
@@ -2028,3 +2034,5 @@ document.addEventListener("DOMContentLoaded", () => {
 window.initAutocomplete = initAutocomplete;
 window.addStopField = addStopField;
 window.calculatePrice = calculatePrice;
+
+})();
