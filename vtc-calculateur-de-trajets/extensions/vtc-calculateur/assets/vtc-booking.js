@@ -1912,12 +1912,85 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      const okMsg = "Demande envoyée";
-      const contactErrorEl = document.getElementById("contact-error");
-      if (contactErrorEl) contactErrorEl.textContent = okMsg;
-      if (consentErrorEl) consentErrorEl.textContent = "";
+        const showSuccessPopupAndRedirect = () => {
+          if (document.getElementById("vtc-success-modal")) return;
 
-      // Message visible dans le formulaire (pas de pop-up)
+          const overlay = document.createElement("div");
+          overlay.id = "vtc-success-modal";
+          overlay.setAttribute("role", "dialog");
+          overlay.setAttribute("aria-modal", "true");
+          overlay.style.cssText = [
+            "position:fixed",
+            "inset:0",
+            "z-index:2147483647",
+            "display:flex",
+            "align-items:center",
+            "justify-content:center",
+            "padding:20px",
+            "background:rgba(0,0,0,0.55)",
+          ].join(";");
+
+          const card = document.createElement("div");
+          card.style.cssText = [
+            "max-width:520px",
+            "width:100%",
+            "background:#fff",
+            "border-radius:16px",
+            "padding:22px 20px",
+            "box-shadow:0 20px 60px rgba(0,0,0,0.25)",
+            "border:1px solid rgba(0,0,0,0.08)",
+          ].join(";");
+
+          const title = document.createElement("div");
+          title.textContent = "Demande envoyée";
+          title.style.cssText = [
+            "font-size:18px",
+            "font-weight:700",
+            "letter-spacing:0.2px",
+            "color:#000",
+            "margin:0 0 10px 0",
+          ].join(";");
+
+          const message = document.createElement("div");
+          message.textContent =
+            "Votre demande est prise en compte , un chauffeur vous contactera tres vite pour confirmer votre trajet . Merci . Your request has been received; a driver will contact you very soon to confirm your reservation. Thank you.";
+          message.style.cssText = [
+            "font-size:14px",
+            "line-height:1.5",
+            "color:rgba(0,0,0,0.85)",
+          ].join(";");
+
+          const hint = document.createElement("div");
+          hint.textContent = "Retour à l’accueil dans 5 secondes…";
+          hint.style.cssText = [
+            "margin-top:14px",
+            "font-size:12px",
+            "color:rgba(0,0,0,0.6)",
+          ].join(";");
+
+          card.appendChild(title);
+          card.appendChild(message);
+          card.appendChild(hint);
+          overlay.appendChild(card);
+          document.body.appendChild(overlay);
+
+          const goHome = () => {
+            try {
+              overlay.remove();
+            } catch {
+              // ignore
+            }
+            window.location.href = `${window.location.origin}/`;
+          };
+
+          setTimeout(goHome, 5000);
+        };
+
+        const contactErrorEl = document.getElementById("contact-error");
+        if (contactErrorEl) contactErrorEl.textContent = "";
+        if (consentErrorEl) consentErrorEl.textContent = "";
+
+        showSuccessPopupAndRedirect();
     });
   }
 
