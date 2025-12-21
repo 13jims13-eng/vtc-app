@@ -189,13 +189,22 @@
         <p id="contact-error" style="color:#c00;font-size:14px;margin-top:6px;"></p>
 
         {% assign privacy_href = shop.policies.privacy_policy.url %}
-        {% if privacy_href == blank %}{% assign privacy_href = '#' %}{% endif %}
         {% assign terms_href = shop.policies.terms_of_service.url %}
-        {% if terms_href == blank %}{% assign terms_href = '#' %}{% endif %}
 
         <label class="vtc-checkbox" style="display:block;margin-top:12px;">
             <input type="checkbox" id="termsConsent" required>
-            J’ai lu et j’accepte les <a href="{{ terms_href }}">Conditions</a> et la <a href="{{ privacy_href }}">Politique de confidentialité</a>.
+                        J’ai lu et j’accepte les
+                        {% if terms_href != blank %}
+                            <a href="{{ terms_href }}" style="text-decoration:underline;color:inherit;">Conditions</a>
+                        {% else %}
+                            <span>Conditions</span>
+                        {% endif %}
+                        et la
+                        {% if privacy_href != blank %}
+                            <a href="{{ privacy_href }}" style="text-decoration:underline;color:inherit;">Politique de confidentialité</a>
+                        {% else %}
+                            <span>Politique de confidentialité</span>
+                        {% endif %}.
         </label>
 
         <label class="vtc-checkbox" style="display:block;margin-top:10px;">
