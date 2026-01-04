@@ -6,6 +6,7 @@ import {
   validateBookingSummary,
   type BookingNotifyRequestBody,
 } from "../lib/bookingNotify.server";
+import { getShopConfig } from "../lib/shopConfig.server";
 
 function jsonResponse(data: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
@@ -30,7 +31,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return jsonResponse({ ok: false, error: "JSON invalide", requestId }, { status: 400 });
   }
 
-  const summary = buildBookingSummary(body);
+  const shop = requestUrl.searchParams.get("shop");
+  const shopConfig = shop ? await getShopConfig(shop) : null;
+
+  const summaryBase = buildBookingSummary(body);
+  const summary =
+    !summaryBase.bookingEmailToOverride && shopConfig?.bookingEmailTo
+      ? { ...summaryBase, bookingEmailToOverride: shopConfig.bookingEmailTo }
+      : summaryBase;
   const validationError = validateBookingSummary(summary);
   if (validationError) {
     return jsonResponse({ ok: false, error: validationError, requestId }, { status: 400 });
@@ -69,7 +77,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return jsonResponse({ ok: false, error: "EMAIL_FAILED", requestId }, { status: 500 });
   }
 
-  const slackResult = await sendSlackOptional(summary.text, { enabled: slackEnabled });
+  const slackWebhookUrlOption = shopConfig
+    ? // Row exists => use DB value (null means explicitly disabled)
+      ({ webhookUrl: shopConfig.slackWebhookUrl } as const)
+    : // No row yet => keep existing env behavior as the default
+      undefined;
+
+  const slackResult = await sendSlackOptional(summary.text, {
+    enabled: slackEnabled,
+    ...(slackWebhookUrlOption ?? {}),
+  });
   if (slackResult.ok) {
     console.log("slack ok");
   } else if (slackResult.error === "SLACK_NOT_CONFIGURED" || slackResult.error === "SLACK_DISABLED") {

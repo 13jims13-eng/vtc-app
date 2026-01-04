@@ -32,3 +32,11 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+model ShopConfig {
+  shop           String   @id
+  bookingEmailTo String?
+  slackWebhookUrl String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}

@@ -5,6 +5,7 @@ import {
   validateBookingSummary,
   type BookingNotifyRequestBody,
 } from "../lib/bookingNotify.server";
+import { getShopConfig } from "../lib/shopConfig.server";
 
 function jsonResponse(data: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
@@ -77,7 +78,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       marketingConsent: summary.marketingConsent,
     });
 
-    const slackRes = await sendSlackRequired(summary.text);
+    const requestUrl = new URL(request.url);
+    const shop = requestUrl.searchParams.get("shop");
+    const shopConfig = shop ? await getShopConfig(shop) : null;
+
+    const slackRes = await sendSlackRequired(summary.text, shopConfig ? { webhookUrl: shopConfig.slackWebhookUrl } : undefined);
     if (!slackRes.ok) {
       console.error("slack ko", { error: slackRes.error });
       return jsonResponse(

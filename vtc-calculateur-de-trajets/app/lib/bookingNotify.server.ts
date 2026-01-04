@@ -89,6 +89,27 @@ export function isValidSingleEmail(value: string) {
   return /^\S+@\S+\.\S+$/.test(v);
 }
 
+export function validateSlackWebhookUrl(value: string):
+  | { ok: true; normalized: string }
+  | { ok: false; reason: "EMPTY" | "NOT_HTTPS" | "INVALID_URL" | "INVALID_PREFIX" } {
+  const v = value.trim();
+  if (!v) return { ok: false, reason: "EMPTY" };
+
+  let url: URL;
+  try {
+    url = new URL(v);
+  } catch {
+    return { ok: false, reason: "INVALID_URL" };
+  }
+
+  if (url.protocol !== "https:") return { ok: false, reason: "NOT_HTTPS" };
+  if (!v.startsWith("https://hooks.slack.com/services/")) {
+    return { ok: false, reason: "INVALID_PREFIX" };
+  }
+
+  return { ok: true, normalized: v };
+}
+
 export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSummary {
   const contact = body?.contact || {};
   const trip = body?.trip || {};
@@ -385,12 +406,18 @@ export async function sendBookingEmail(summary: BookingSummary) {
   };
 }
 
-export async function sendSlackOptional(text: string, options?: { enabled?: boolean }) {
+export async function sendSlackOptional(
+  text: string,
+  options?: { enabled?: boolean; webhookUrl?: string | null },
+) {
   if (options?.enabled === false) {
     return { ok: false as const, error: "SLACK_DISABLED" as const };
   }
 
-  const webhook = cleanText(process.env.SLACK_WEBHOOK_URL);
+  const hasOverride = !!options && Object.prototype.hasOwnProperty.call(options, "webhookUrl");
+  const webhook = hasOverride
+    ? cleanText(options.webhookUrl)
+    : cleanText(process.env.SLACK_WEBHOOK_URL);
   if (!webhook) return { ok: false as const, error: "SLACK_NOT_CONFIGURED" as const };
 
   try {
@@ -417,11 +444,14 @@ export async function sendSlackOptional(text: string, options?: { enabled?: bool
   }
 }
 
-export async function sendSlackRequired(text: string) {
-  const webhook = cleanText(process.env.SLACK_WEBHOOK_URL);
+export async function sendSlackRequired(text: string, options?: { webhookUrl?: string | null }) {
+  const hasOverride = !!options && Object.prototype.hasOwnProperty.call(options, "webhookUrl");
+  const webhook = hasOverride
+    ? cleanText(options.webhookUrl)
+    : cleanText(process.env.SLACK_WEBHOOK_URL);
   if (!webhook) return { ok: false as const, error: "SLACK_WEBHOOK_URL missing" as const };
 
-  const res = await sendSlackOptional(text);
+  const res = await sendSlackOptional(text, { webhookUrl: webhook });
   if (res.ok) return { ok: true as const };
 
   if (res.error === "SLACK_NOT_CONFIGURED") {
