@@ -14,6 +14,8 @@ const OPTIONAL = [
   "SMTP_PASS",
   "BOOKING_EMAIL_FROM",
   "BOOKING_EMAIL_TO",
+  "CONFIG_ENCRYPTION_KEY",
+  // DEV fallback only (Slack config should live in DB, encrypted)
   "SLACK_WEBHOOK_URL",
 ];
 
@@ -52,7 +54,14 @@ if (missingOptionalEmailGroup.length === 0) {
   for (const k of missingOptionalEmailGroup) console.log(`- ${k}`);
 }
 
-console.log("Slack:", isTruthy(process.env.SLACK_WEBHOOK_URL) ? "configuré" : "non configuré (optionnel)");
+console.log(
+  "Slack (chiffrement):",
+  isTruthy(process.env.CONFIG_ENCRYPTION_KEY) ? "CONFIG_ENCRYPTION_KEY=(ok)" : "CONFIG_ENCRYPTION_KEY=(manquant)",
+);
+console.log(
+  "Slack (fallback dev):",
+  isTruthy(process.env.SLACK_WEBHOOK_URL) ? "SLACK_WEBHOOK_URL=(présent)" : "SLACK_WEBHOOK_URL=(absent)",
+);
 
 console.log("\nRappels Shopify / Render:");
 console.log("1) Render: déployer et obtenir l'URL stable.");

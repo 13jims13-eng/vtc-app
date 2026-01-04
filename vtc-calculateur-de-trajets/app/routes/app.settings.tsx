@@ -5,14 +5,12 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 
 import { authenticate } from "../shopify.server";
 import { getShopConfig, upsertShopConfig } from "../lib/shopConfig.server";
-import { cleanText, isValidSingleEmail, validateSlackWebhookUrl } from "../lib/bookingNotify.server";
+import { cleanText, isValidSingleEmail } from "../lib/bookingNotify.server";
 
 type LoaderData = {
   bookingEmailTo: string;
-  slackWebhookUrl: string;
   defaults: {
     bookingEmailTo: string;
-    slackWebhookUrl: string;
   };
 };
 
@@ -22,7 +20,6 @@ type ActionData =
       ok: false;
       fieldErrors?: {
         bookingEmailTo?: string;
-        slackWebhookUrl?: string;
       };
       error?: string;
     };
@@ -35,12 +32,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const defaults = {
     bookingEmailTo: cleanText(process.env.BOOKING_EMAIL_TO),
-    slackWebhookUrl: cleanText(process.env.SLACK_WEBHOOK_URL),
   };
 
   return {
     bookingEmailTo: config?.bookingEmailTo ?? "",
-    slackWebhookUrl: config?.slackWebhookUrl ?? "",
     defaults,
   } satisfies LoaderData;
 };
@@ -52,17 +47,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
 
   const bookingEmailToRaw = cleanText(form.get("bookingEmailTo"));
-  const slackWebhookUrlRaw = cleanText(form.get("slackWebhookUrl"));
 
   const fieldErrors: NonNullable<Extract<ActionData, { ok: false }>['fieldErrors']> = {};
 
   if (bookingEmailToRaw && !isValidSingleEmail(bookingEmailToRaw)) {
     fieldErrors.bookingEmailTo = "Email invalide";
-  }
-
-  const slackValidation = validateSlackWebhookUrl(slackWebhookUrlRaw);
-  if (slackWebhookUrlRaw && !slackValidation.ok) {
-    fieldErrors.slackWebhookUrl = "URL Slack invalide";
   }
 
   if (Object.keys(fieldErrors).length) {
@@ -73,7 +62,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await upsertShopConfig({
       shop,
       bookingEmailTo: bookingEmailToRaw ? bookingEmailToRaw : null,
-      slackWebhookUrl: slackWebhookUrlRaw ? slackWebhookUrlRaw : null,
     });
 
     return { ok: true } satisfies ActionData;
@@ -90,23 +78,18 @@ export default function SettingsPage() {
   const shopify = useAppBridge();
 
   const [bookingEmailTo, setBookingEmailTo] = useState(loaderData.bookingEmailTo);
-  const [slackWebhookUrl, setSlackWebhookUrl] = useState(loaderData.slackWebhookUrl);
 
   useEffect(() => {
     setBookingEmailTo(loaderData.bookingEmailTo);
-    setSlackWebhookUrl(loaderData.slackWebhookUrl);
-  }, [loaderData.bookingEmailTo, loaderData.slackWebhookUrl]);
+  }, [loaderData.bookingEmailTo]);
 
   const fieldErrors = actionData && !actionData.ok ? actionData.fieldErrors : undefined;
-
-  const slackHelp = "Collez l’URL de webhook Slack (Incoming Webhook).";
 
   const showDefaults = useMemo(() => {
     return {
       bookingEmailTo: loaderData.defaults.bookingEmailTo,
-      slackWebhookUrl: loaderData.defaults.slackWebhookUrl,
     };
-  }, [loaderData.defaults.bookingEmailTo, loaderData.defaults.slackWebhookUrl]);
+  }, [loaderData.defaults.bookingEmailTo]);
 
   useEffect(() => {
     if (!actionData) return;
@@ -133,20 +116,6 @@ export default function SettingsPage() {
               onChange={(e) => setBookingEmailTo(e.currentTarget.value)}
               error={fieldErrors?.bookingEmailTo}
             ></s-text-field>
-
-            <s-text-field
-              name="slackWebhookUrl"
-              label="URL Slack"
-              details={slackHelp}
-              placeholder="https://hooks.slack.com/services/..."
-              value={slackWebhookUrl}
-              onChange={(e) => setSlackWebhookUrl(e.currentTarget.value)}
-              error={fieldErrors?.slackWebhookUrl}
-            ></s-text-field>
-
-            <s-paragraph>
-              Laissez ce champ vide pour désactiver Slack.
-            </s-paragraph>
 
             <s-button type="submit" variant="primary">
               Enregistrer

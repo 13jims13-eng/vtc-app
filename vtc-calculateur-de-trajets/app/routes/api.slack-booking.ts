@@ -1,11 +1,11 @@
 import type { ActionFunctionArgs } from "react-router";
 import {
   buildBookingSummary,
-  sendSlackRequired,
+  sendSlackOptional,
   validateBookingSummary,
   type BookingNotifyRequestBody,
 } from "../lib/bookingNotify.server";
-import { getShopConfig } from "../lib/shopConfig.server";
+import { resolveSlackWebhookForShop } from "../lib/slackConfig.server";
 
 function jsonResponse(data: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
@@ -79,12 +79,42 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     const requestUrl = new URL(request.url);
-    const shop = requestUrl.searchParams.get("shop");
-    const shopConfig = shop ? await getShopConfig(shop) : null;
+    const shop = String(requestUrl.searchParams.get("shop") || "").trim() || null;
+    const slackEnabled = body?.config?.slackEnabled !== false;
+    const slackDestinationKey = String(body?.config?.slackDestination || "").trim() || null;
 
-    const slackRes = await sendSlackRequired(summary.text, shopConfig ? { webhookUrl: shopConfig.slackWebhookUrl } : undefined);
+    if (!slackEnabled) {
+      console.log("slack skip", { shop, slackEnabled, slackDestinationKey, webhookSource: "none" });
+      return jsonResponse({ ok: true }, { status: 200, headers: corsHeaders(request) });
+    }
+
+    const resolved = shop
+      ? await resolveSlackWebhookForShop({ shop, destinationKey: slackDestinationKey })
+      : ({ ok: false, source: "none", destinationKey: slackDestinationKey } as const);
+
+    console.log("slack resolved", {
+      shop,
+      slackEnabled,
+      slackDestinationKey: resolved.destinationKey,
+      webhookSource: resolved.ok ? resolved.source : "none",
+    });
+
+    if (!resolved.ok) {
+      console.log("slack skip", { shop, slackEnabled, slackDestinationKey: resolved.destinationKey, webhookSource: "none" });
+      return jsonResponse({ ok: true }, { status: 200, headers: corsHeaders(request) });
+    }
+
+    const slackRes = await sendSlackOptional(summary.text, {
+      enabled: true,
+      webhookUrl: resolved.webhookUrl,
+    });
+
     if (!slackRes.ok) {
-      console.error("slack ko", { error: slackRes.error });
+      if (slackRes.error === "SLACK_NOT_CONFIGURED" || slackRes.error === "SLACK_DISABLED") {
+        console.log("slack skip");
+        return jsonResponse({ ok: true }, { status: 200, headers: corsHeaders(request) });
+      }
+      console.error("slack ko", { error: slackRes.error, details: slackRes.details });
       return jsonResponse(
         { ok: false, error: slackRes.error, details: slackRes.details },
         { status: 500, headers: corsHeaders(request) },

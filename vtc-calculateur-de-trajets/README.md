@@ -38,11 +38,12 @@ shopify app dev
 
 ### VTC – Slack booking
 
-Le message Slack est envoyé uniquement au clic sur **"Réserver mon trajet"** (côté serveur, via Incoming Webhook).
+Le message Slack est envoyé uniquement au clic sur **"Réserver mon trajet"** (côté serveur).
 
-- Crée un fichier `.env` (ignoré par git) à la racine de ce dossier (à côté de `package.json`), basé sur `.env.example`.
-- Renseigne `SLACK_WEBHOOK_URL`.
-- Si `SLACK_WEBHOOK_URL` est absent, l'API renverra `500` avec `{ ok:false, error:"SLACK_WEBHOOK_URL missing" }` et loguera l'erreur.
+- La configuration Slack se fait dans l’admin de l’app: `/app/settings/slack`.
+- Les webhooks Slack sont stockés **chiffrés** en base (AES-256-GCM) via `CONFIG_ENCRYPTION_KEY`.
+- Le thème ne doit contenir aucun webhook / token.
+- `SLACK_WEBHOOK_URL` peut être utilisé comme **fallback DEV** uniquement (si aucune config DB n’existe).
 
 Press P to open the URL to your app. Once you click install, you can start development.
 
@@ -127,7 +128,8 @@ Ce projet est prêt à être déployé sur Render avec une URL stable.
   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`
   - `BOOKING_EMAIL_FROM`, `BOOKING_EMAIL_TO`
 - Slack (optionnel):
-  - `SLACK_WEBHOOK_URL`
+  - `CONFIG_ENCRYPTION_KEY`
+  - (fallback DEV uniquement) `SLACK_WEBHOOK_URL`
 
 #### Après déploiement Render (mise à jour Shopify)
 

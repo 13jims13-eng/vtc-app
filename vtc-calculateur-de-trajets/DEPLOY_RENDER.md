@@ -33,7 +33,8 @@ Configurer ces variables (sans jamais commiter de secrets).
 
 ### Slack (optionnel)
 
-- `SLACK_WEBHOOK_URL`
+- `CONFIG_ENCRYPTION_KEY` (32 bytes en base64 ou 64 hex chars) — requis si Slack est utilisé
+- (fallback DEV uniquement) `SLACK_WEBHOOK_URL`
 
 Vérification locale (sans afficher les secrets):
 

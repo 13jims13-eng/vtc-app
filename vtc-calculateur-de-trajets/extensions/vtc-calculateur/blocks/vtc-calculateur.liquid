@@ -101,6 +101,7 @@
     data-stop-fee="{{ block.settings.stop_fee }}"
     data-quote-message="{{ block.settings.quote_message | escape }}"
     data-slack-enabled="{{ block.settings.slack_enabled }}"
+    data-slack-destination="{{ block.settings.slack_destination | escape }}"
     data-options-display-mode="{{ options_display_mode }}"
     data-options-config='{{ options_config_json | strip_newlines | escape }}'
     data-config='{{ widget_config_json | strip_newlines | escape }}'
@@ -492,7 +493,19 @@
             "id": "slack_enabled",
             "label": "Slack activé",
             "default": true
-                }
+        },
+        {
+                        "type": "select",
+                        "id": "slack_destination",
+                        "label": "Destination Slack (optionnel)",
+                        "info": "Destination non sensible. Le webhook est configuré dans l’admin de l’app.",
+                        "default": "devis",
+                        "options": [
+                            { "value": "devis", "label": "devis" },
+                            { "value": "reservations", "label": "reservations" },
+                            { "value": "support", "label": "support" }
+                        ]
+        }
   ]
 }
 {% endschema %}

@@ -36,7 +36,29 @@ model Session {
 model ShopConfig {
   shop           String   @id
   bookingEmailTo String?
-  slackWebhookUrl String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+}
+
+model SlackConfig {
+  shop                  String             @id
+  defaultDestinationKey String?
+  destinations          SlackDestination[]
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+}
+
+model SlackDestination {
+  id               String     @id @default(cuid())
+  shop             String
+  key              String
+  name             String
+  webhookEncrypted String
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  config SlackConfig @relation(fields: [shop], references: [shop], onDelete: Cascade)
+
+  @@unique([shop, key])
+  @@index([shop])
 }

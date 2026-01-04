@@ -6,7 +6,7 @@ import {
   validateBookingSummary,
   type BookingNotifyRequestBody,
 } from "../lib/bookingNotify.server";
-import { getShopConfig } from "../lib/shopConfig.server";
+import { resolveSlackWebhookForShop } from "../lib/slackConfig.server";
 
 function jsonResponse(data: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
@@ -31,20 +31,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return jsonResponse({ ok: false, error: "JSON invalide", requestId }, { status: 400 });
   }
 
-  const shop = requestUrl.searchParams.get("shop");
-  const shopConfig = shop ? await getShopConfig(shop) : null;
-
   const summaryBase = buildBookingSummary(body);
-  const summary =
-    !summaryBase.bookingEmailToOverride && shopConfig?.bookingEmailTo
-      ? { ...summaryBase, bookingEmailToOverride: shopConfig.bookingEmailTo }
-      : summaryBase;
+  const summary = summaryBase;
   const validationError = validateBookingSummary(summary);
   if (validationError) {
     return jsonResponse({ ok: false, error: validationError, requestId }, { status: 400 });
   }
 
+  const shop = String(requestUrl.searchParams.get("shop") || "").trim() || null;
   const slackEnabled = body?.config?.slackEnabled !== false;
+  const slackDestinationKey = String(body?.config?.slackDestination || "").trim() || null;
 
   console.log("incoming payload ok", {
     hasContact: true,
@@ -62,6 +58,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     marketingConsent: summary.marketingConsent,
     hasBookingEmailTo: !!summary.bookingEmailToOverride,
     slackEnabled,
+    slackDestinationKey,
+    shop,
   });
 
   try {
@@ -77,22 +75,47 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return jsonResponse({ ok: false, error: "EMAIL_FAILED", requestId }, { status: 500 });
   }
 
-  const slackWebhookUrlOption = shopConfig
-    ? // Row exists => use DB value (null means explicitly disabled)
-      ({ webhookUrl: shopConfig.slackWebhookUrl } as const)
-    : // No row yet => keep existing env behavior as the default
-      undefined;
+  if (!slackEnabled) {
+    console.log("slack skip", {
+      shop,
+      slackEnabled,
+      slackDestinationKey,
+      webhookSource: "none",
+    });
+    return jsonResponse({ ok: true, requestId }, { status: 200 });
+  }
 
-  const slackResult = await sendSlackOptional(summary.text, {
-    enabled: slackEnabled,
-    ...(slackWebhookUrlOption ?? {}),
+  const resolved = shop
+    ? await resolveSlackWebhookForShop({ shop, destinationKey: slackDestinationKey })
+    : ({ ok: false, source: "none", destinationKey: slackDestinationKey } as const);
+
+  console.log("slack resolved", {
+    shop,
+    slackEnabled,
+    slackDestinationKey: resolved.destinationKey,
+    webhookSource: resolved.ok ? resolved.source : "none",
   });
-  if (slackResult.ok) {
-    console.log("slack ok");
-  } else if (slackResult.error === "SLACK_NOT_CONFIGURED" || slackResult.error === "SLACK_DISABLED") {
-    console.log("slack skip");
+
+  if (resolved.ok) {
+    const slackResult = await sendSlackOptional(summary.text, {
+      enabled: true,
+      webhookUrl: resolved.webhookUrl,
+    });
+
+    if (slackResult.ok) {
+      console.log("slack ok");
+    } else if (slackResult.error === "SLACK_NOT_CONFIGURED" || slackResult.error === "SLACK_DISABLED") {
+      console.log("slack skip");
+    } else {
+      console.error("slack ko", { error: slackResult.error, details: slackResult.details });
+    }
   } else {
-    console.error("slack ko", { error: slackResult.error, details: slackResult.details });
+    console.log("slack skip", {
+      shop,
+      slackEnabled,
+      slackDestinationKey: resolved.destinationKey,
+      webhookSource: "none",
+    });
   }
 
   return jsonResponse({ ok: true, requestId }, { status: 200 });

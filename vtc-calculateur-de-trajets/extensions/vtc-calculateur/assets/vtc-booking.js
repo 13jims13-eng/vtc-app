@@ -1892,6 +1892,8 @@ document.addEventListener("DOMContentLoaded", () => {
           bookingEmailTo:
             (getWidgetDataset().bookingEmailTo || "").trim() || undefined,
           slackEnabled: getWidgetConfig().slackEnabled,
+          slackDestination:
+            (getWidgetDataset().slackDestination || "").trim() || undefined,
         },
       };
 

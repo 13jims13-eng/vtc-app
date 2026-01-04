@@ -35,6 +35,7 @@ export type BookingNotifyRequestBody = {
   config?: {
     bookingEmailTo?: string;
     slackEnabled?: boolean;
+    slackDestination?: string;
   };
 };
 
