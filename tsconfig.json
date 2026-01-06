@@ -1,5 +1,4 @@
 {
-  "extends": "./vtc-calculateur-de-trajets/tsconfig.json",
-  "include": ["vtc-calculateur-de-trajets/**/*"],
-  "exclude": ["app/**", "_BACKUP/**", "node_modules/**"]
+  "files": [],
+  "references": [{ "path": "./vtc-app" }]
 }

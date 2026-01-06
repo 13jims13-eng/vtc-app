@@ -2,7 +2,7 @@ services:
   - type: web
     name: vtc-calculateur-de-trajets
     env: node
-    rootDir: vtc-calculateur-de-trajets
+    rootDir: vtc-app
     plan: starter
     autoDeploy: true
     buildCommand: npm ci && npm run build
@@ -20,6 +20,20 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+
+      # Supabase (dashboard + API publique)
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      # Service role (server-only). Compat: SUPABASE_SERVICE_ROLE_KEY
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+
+      # Chiffrement (Slack secrets)
+      - key: ENCRYPTION_KEY
+        sync: false
+
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
@@ -34,5 +48,12 @@ services:
         sync: false
       - key: BOOKING_EMAIL_TO
         sync: false
+
+      # Slack fallback DEV uniquement (ne pas activer en prod)
+      - key: ALLOW_DEFAULT_SLACK_FALLBACK
+        sync: false
+      - key: DEFAULT_SLACK_WEBHOOK_URL
+        sync: false
+      # Compat legacy
       - key: SLACK_WEBHOOK_URL
         sync: false
