@@ -1845,6 +1845,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const termsConsent = document.getElementById("termsConsent");
       const marketingConsent = document.getElementById("marketingConsent");
+      const contactErrorEl = document.getElementById("contact-error");
       const consentErrorEl = document.getElementById("consent-error");
 
       if (consentErrorEl) consentErrorEl.textContent = "";
@@ -1976,8 +1977,6 @@ document.addEventListener("DOMContentLoaded", () => {
           if (status) return `${base} (code ${status})${requestId}`;
           return `${base}${requestId}`;
         })();
-
-        const contactErrorEl = document.getElementById("contact-error");
         if (contactErrorEl) contactErrorEl.textContent = msg;
         if (consentErrorEl) consentErrorEl.textContent = msg;
 
@@ -1986,8 +1985,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Avertissements: l'API peut répondre ok=true mais ne pas envoyer email/slack
       // (ex: configuration manquante côté app). On informe l'utilisateur sans bloquer.
-      const contactErrorEl = document.getElementById("contact-error");
-      const consentErrorEl = document.getElementById("consent-error");
       if (contactErrorEl) contactErrorEl.textContent = "";
       if (consentErrorEl) consentErrorEl.textContent = "";
 
@@ -2079,7 +2076,6 @@ document.addEventListener("DOMContentLoaded", () => {
           setTimeout(goHome, 5000);
         };
 
-        const contactErrorEl = document.getElementById("contact-error");
         if (contactErrorEl) contactErrorEl.textContent = "";
         if (consentErrorEl) consentErrorEl.textContent = "";
 
