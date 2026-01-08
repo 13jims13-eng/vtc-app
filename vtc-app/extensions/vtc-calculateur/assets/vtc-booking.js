@@ -15,6 +15,7 @@ let autocompleteInitStarted = false;
 let _europeBoundsCache = null;
 let _widgetConfigCache = null;
 let _googleMapsLoadPromise = null;
+let _googleMapsApiKeyResolvePromise = null;
 let _widgetState = {
   selectedVehicleId: null,
   selectedVehicleLabel: null,
@@ -34,7 +35,23 @@ function getWidgetDataset() {
 }
 
 function setMapsStatus(text) {
-  const el = document.getElementById("vtc-maps-status");
+  let el = document.getElementById("vtc-maps-status");
+  if (!el && text) {
+    el = document.createElement("div");
+    el.id = "vtc-maps-status";
+    el.style.fontSize = "13px";
+    el.style.opacity = "0.8";
+    el.style.marginTop = "6px";
+    el.style.display = "none";
+
+    const endInput = document.getElementById("end");
+    if (endInput && endInput.insertAdjacentElement) {
+      endInput.insertAdjacentElement("afterend", el);
+    } else {
+      const widget = getWidgetEl();
+      if (widget) widget.appendChild(el);
+    }
+  }
   if (!el) return;
   if (!text) {
     el.textContent = "";
@@ -45,101 +62,125 @@ function setMapsStatus(text) {
   el.style.display = "block";
 }
 
+function resolveGoogleMapsApiKey() {
+  const dataset = getWidgetDataset();
+  const fromTheme = String(dataset.googleMapsApiKey || "").trim();
+  if (fromTheme) return Promise.resolve(fromTheme);
+
+  // Fallback: if the merchant configured the key server-side (env), fetch it via App Proxy.
+  // This makes "I put the key in env" actually work for the storefront widget.
+  if (_googleMapsApiKeyResolvePromise) return _googleMapsApiKeyResolvePromise;
+
+  _googleMapsApiKeyResolvePromise = fetch("/apps/vtc/api/public-config", {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    credentials: "same-origin",
+  })
+    .then(async (res) => {
+      if (!res.ok) return null;
+      try {
+        return await res.json();
+      } catch {
+        return null;
+      }
+    })
+    .then((json) => String(json?.googleMapsApiKey || "").trim())
+    .catch(() => "");
+
+  return _googleMapsApiKeyResolvePromise;
+}
+
 function ensureGoogleMapsLoaded(reason) {
   if (isGoogleReady()) return Promise.resolve(true);
   if (_googleMapsLoadPromise) return _googleMapsLoadPromise;
 
-  const dataset = getWidgetDataset();
-  const apiKey = String(dataset.googleMapsApiKey || "").trim();
-  if (!apiKey) {
-    console.warn("google-maps: missing api key (theme setting google_maps_api_key)");
-    const host = typeof window !== "undefined" ? window.location.host : "";
-    setMapsStatus(
-      host
-        ? `Google Maps n’est pas configuré (clé API manquante). Domaine: ${host}`
-        : "Google Maps n’est pas configuré (clé API manquante).",
-    );
-    return Promise.resolve(false);
-  }
-
-  const existing = document.getElementById("vtc-google-maps-js");
-  if (existing) {
-    // Script tag exists, just wait a bit for google to become ready.
-    _googleMapsLoadPromise = new Promise((resolve) => {
-      setMapsStatus("Chargement de Google Maps…");
-      const startedAt = Date.now();
-      const interval = setInterval(() => {
-        if (isGoogleReady()) {
-          clearInterval(interval);
-          setMapsStatus("");
-          resolve(true);
-          return;
-        }
-        if (Date.now() - startedAt > 15000) {
-          clearInterval(interval);
-          setMapsStatus("");
-          resolve(false);
-        }
-      }, 150);
-    });
-    return _googleMapsLoadPromise.then((ok) => {
-      if (!ok) _googleMapsLoadPromise = null;
-      return ok;
-    });
-  }
-
-  _googleMapsLoadPromise = new Promise((resolve) => {
-    setMapsStatus("Chargement de Google Maps…");
-    console.log("google-maps: loading", { reason });
-
-    // Google Maps déclenche gm_authFailure lorsque la clé est invalide/refusée.
-    // On affiche un message actionnable pour guider la configuration des restrictions HTTP.
-    try {
-      window.gm_authFailure = () => {
-        const host = window.location.host;
-        setMapsStatus(
-          `Google Maps a refusé la clé API. Vérifiez les restrictions (HTTP referrers) et ajoutez: https://${host}/* (et éventuellement https://*.myshopify.com/*).`,
-        );
-      };
-    } catch {
-      // ignore
+  _googleMapsLoadPromise = resolveGoogleMapsApiKey().then((apiKey) => {
+    if (!apiKey) {
+      console.warn("google-maps: missing api key (theme setting or server env)");
+      const host = typeof window !== "undefined" ? window.location.host : "";
+      setMapsStatus(
+        host
+          ? `Google Maps n’est pas configuré (clé API manquante). Domaine: ${host}. Configurez-la dans le thème (App embed) ou côté serveur (env).`
+          : "Google Maps n’est pas configuré (clé API manquante).",
+      );
+      return false;
     }
 
-    const script = document.createElement("script");
-    script.id = "vtc-google-maps-js";
-    script.async = true;
-    script.defer = true;
-    // Keep it FR by default; actual restriction is enforced by Places Autocomplete options too.
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&language=fr&region=FR`;
+    const existing = document.getElementById("vtc-google-maps-js");
+    if (existing) {
+      // Script tag exists, just wait a bit for google to become ready.
+      return new Promise((resolve) => {
+        setMapsStatus("Chargement de Google Maps…");
+        const startedAt = Date.now();
+        const interval = setInterval(() => {
+          if (isGoogleReady()) {
+            clearInterval(interval);
+            setMapsStatus("");
+            resolve(true);
+            return;
+          }
+          if (Date.now() - startedAt > 15000) {
+            clearInterval(interval);
+            setMapsStatus("");
+            resolve(false);
+          }
+        }, 150);
+      });
+    }
 
-    const timeout = setTimeout(() => {
-      setMapsStatus("");
-      resolve(false);
-    }, 15000);
+    return new Promise((resolve) => {
+      setMapsStatus("Chargement de Google Maps…");
+      console.log("google-maps: loading", { reason });
 
-    script.onload = () => {
-      clearTimeout(timeout);
-      const ok = isGoogleReady();
-      if (!ok) {
+      // Google Maps déclenche gm_authFailure lorsque la clé est invalide/refusée.
+      // On affiche un message actionnable pour guider la configuration des restrictions HTTP.
+      try {
+        window.gm_authFailure = () => {
+          const host = window.location.host;
+          setMapsStatus(
+            `Google Maps a refusé la clé API. Vérifiez les restrictions (HTTP referrers) et ajoutez: https://${host}/* (et éventuellement https://*.myshopify.com/*).`,
+          );
+        };
+      } catch {
+        // ignore
+      }
+
+      const script = document.createElement("script");
+      script.id = "vtc-google-maps-js";
+      script.async = true;
+      script.defer = true;
+      // Keep it FR by default; actual restriction is enforced by Places Autocomplete options too.
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&language=fr&region=FR`;
+
+      const timeout = setTimeout(() => {
+        setMapsStatus("");
+        resolve(false);
+      }, 15000);
+
+      script.onload = () => {
+        clearTimeout(timeout);
+        const ok = isGoogleReady();
+        if (!ok) {
+          const host = window.location.host;
+          setMapsStatus(
+            `Google Maps s’est chargé mais Places API n’est pas disponible. Activez "Places API" dans Google Cloud + facturation, puis autorisez: https://${host}/*`,
+          );
+        } else {
+          setMapsStatus("");
+        }
+        resolve(ok);
+      };
+      script.onerror = () => {
+        clearTimeout(timeout);
         const host = window.location.host;
         setMapsStatus(
-          `Google Maps s’est chargé mais n’est pas prêt (Places API / restrictions). Vérifiez la clé et autorisez: https://${host}/*`,
+          `Impossible de charger Google Maps (script bloqué). Vérifiez la connexion/CSP et les restrictions de clé pour: https://${host}/*`,
         );
-      } else {
-        setMapsStatus("");
-      }
-      resolve(ok);
-    };
-    script.onerror = () => {
-      clearTimeout(timeout);
-      const host = window.location.host;
-      setMapsStatus(
-        `Impossible de charger Google Maps (script bloqué). Vérifiez la connexion/CSP et les restrictions de clé pour: https://${host}/*`,
-      );
-      resolve(false);
-    };
+        resolve(false);
+      };
 
-    document.head.appendChild(script);
+      document.head.appendChild(script);
+    });
   });
 
   return _googleMapsLoadPromise.then((ok) => {
