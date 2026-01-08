@@ -53,7 +53,12 @@ function ensureGoogleMapsLoaded(reason) {
   const apiKey = String(dataset.googleMapsApiKey || "").trim();
   if (!apiKey) {
     console.warn("google-maps: missing api key (theme setting google_maps_api_key)");
-    setMapsStatus("Google Maps n’est pas configuré.");
+    const host = typeof window !== "undefined" ? window.location.host : "";
+    setMapsStatus(
+      host
+        ? `Google Maps n’est pas configuré (clé API manquante). Domaine: ${host}`
+        : "Google Maps n’est pas configuré (clé API manquante).",
+    );
     return Promise.resolve(false);
   }
 
@@ -87,6 +92,19 @@ function ensureGoogleMapsLoaded(reason) {
     setMapsStatus("Chargement de Google Maps…");
     console.log("google-maps: loading", { reason });
 
+    // Google Maps déclenche gm_authFailure lorsque la clé est invalide/refusée.
+    // On affiche un message actionnable pour guider la configuration des restrictions HTTP.
+    try {
+      window.gm_authFailure = () => {
+        const host = window.location.host;
+        setMapsStatus(
+          `Google Maps a refusé la clé API. Vérifiez les restrictions (HTTP referrers) et ajoutez: https://${host}/* (et éventuellement https://*.myshopify.com/*).`,
+        );
+      };
+    } catch {
+      // ignore
+    }
+
     const script = document.createElement("script");
     script.id = "vtc-google-maps-js";
     script.async = true;
@@ -101,12 +119,23 @@ function ensureGoogleMapsLoaded(reason) {
 
     script.onload = () => {
       clearTimeout(timeout);
-      setMapsStatus("");
-      resolve(isGoogleReady());
+      const ok = isGoogleReady();
+      if (!ok) {
+        const host = window.location.host;
+        setMapsStatus(
+          `Google Maps s’est chargé mais n’est pas prêt (Places API / restrictions). Vérifiez la clé et autorisez: https://${host}/*`,
+        );
+      } else {
+        setMapsStatus("");
+      }
+      resolve(ok);
     };
     script.onerror = () => {
       clearTimeout(timeout);
-      setMapsStatus("");
+      const host = window.location.host;
+      setMapsStatus(
+        `Impossible de charger Google Maps (script bloqué). Vérifiez la connexion/CSP et les restrictions de clé pour: https://${host}/*`,
+      );
       resolve(false);
     };
 
