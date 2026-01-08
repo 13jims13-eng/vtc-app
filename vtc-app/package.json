@@ -22,7 +22,8 @@
     "typecheck": "react-router typegen && tsc --noEmit"
     ,
     "test:create-booking": "npx tsx ./scripts/run-create-booking-test.ts",
-    "test:slack-routing": "npx tsx ./scripts/run-slack-routing-test.ts"
+    "test:slack-routing": "npx tsx ./scripts/run-slack-routing-test.ts",
+    "seed:add-vehicle": "npx tsx ./scripts/run-add-tenant-vehicle.ts"
   },
   "type": "module",
   "engines": {

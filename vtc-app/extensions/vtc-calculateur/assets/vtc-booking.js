@@ -1914,6 +1914,27 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
+      // Avertissements: l'API peut répondre ok=true mais ne pas envoyer email/slack
+      // (ex: configuration manquante côté app). On informe l'utilisateur sans bloquer.
+      const contactErrorEl = document.getElementById("contact-error");
+      const consentErrorEl = document.getElementById("consent-error");
+      if (contactErrorEl) contactErrorEl.textContent = "";
+      if (consentErrorEl) consentErrorEl.textContent = "";
+
+      const warnings = [];
+      if (res?.email && res.email.sent === false) {
+        warnings.push(
+          "le chauffeur n’a pas été notifié par e-mail (configuration manquante).",
+        );
+      }
+      if (res?.slack && res.slack.enabled === true && res.slack.sent === false) {
+        warnings.push("la notification Slack n’a pas été envoyée (configuration manquante).");
+      }
+
+      if (warnings.length && contactErrorEl) {
+        contactErrorEl.textContent = `Attention : ${warnings.join(" ")}`;
+      }
+
         const showSuccessPopupAndRedirect = () => {
           if (document.getElementById("vtc-success-modal")) return;
 

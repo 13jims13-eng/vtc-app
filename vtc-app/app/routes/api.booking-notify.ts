@@ -44,6 +44,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const slackEnabled = body?.config?.slackEnabled !== false;
   const slackDestinationKey = String(body?.config?.slackDestination || "").trim() || null;
 
+  let emailToSource: "tenant" | "widget" | "env" | "setting" | "skip" = "skip";
+  let emailSent = false;
+  const warnings: string[] = [];
+
   console.log("incoming payload ok", {
     hasContact: true,
     start: summary.start,
@@ -65,11 +69,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
 
   try {
-    // IMPORTANT: when called with a Shopify shop, resolve email target from server-side config (Supabase).
-    // We intentionally ignore any client-provided bookingEmailTo override.
+    // IMPORTANT: when called with a Shopify shop, prefer resolving email target from server-side config (Supabase).
+    // If not configured server-side, allow a theme-provided override (data-booking-email-to) for this signed App Proxy call.
     if (shop) {
       const config = await getShopConfig(shop);
-      const bookingEmailTo = config?.bookingEmailTo || null;
+      const bookingEmailTo = config?.bookingEmailTo || summary.bookingEmailToOverride || null;
+
+      emailToSource = config?.bookingEmailTo
+        ? "tenant"
+        : summary.bookingEmailToOverride
+          ? "widget"
+          : "skip";
 
       if (bookingEmailTo) {
         const emailRes = await sendBookingEmailTo(summary, bookingEmailTo);
@@ -77,9 +87,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           console.error("email ko", { error: emailRes.error, missing: emailRes.missing || [] });
           return jsonResponse({ ok: false, error: emailRes.error, requestId }, { status: 500 });
         }
-        console.log("email ok", { toSource: "tenant" });
+        emailSent = true;
+        console.log("email ok", { toSource: emailToSource });
       } else {
         console.log("email skip (tenant not configured)", { shop });
+        warnings.push("EMAIL_NOT_CONFIGURED");
       }
     } else {
       // Legacy behavior (non-Shopify calls): use env config.
@@ -88,6 +100,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         console.error("email ko", { error: emailRes.error, missing: emailRes.missing || [] });
         return jsonResponse({ ok: false, error: emailRes.error, requestId }, { status: 500 });
       }
+      emailSent = true;
+      emailToSource = emailRes.toSource === "setting" ? "setting" : "env";
       console.log("email ok", { toSource: emailRes.toSource });
     }
   } catch (err) {
@@ -103,7 +117,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       slackDestinationKey,
       webhookSource: "none",
     });
-    return jsonResponse({ ok: true, requestId }, { status: 200 });
+    return jsonResponse(
+      {
+        ok: true,
+        requestId,
+        warnings,
+        email: {
+          sent: emailSent,
+          toSource: emailToSource,
+          reason: emailSent ? null : emailToSource === "skip" ? "EMAIL_NOT_CONFIGURED" : "EMAIL_NOT_SENT",
+        },
+        slack: { enabled: false, sent: false, reason: "SLACK_DISABLED" },
+      },
+      { status: 200 },
+    );
   }
 
   const resolved = shop
@@ -126,10 +153,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (slackResult.ok) {
       console.log("slack ok");
+      return jsonResponse(
+        {
+          ok: true,
+          requestId,
+          warnings,
+          email: { sent: emailSent, toSource: emailToSource },
+          slack: {
+            enabled: true,
+            sent: true,
+            destinationKey: resolved.destinationKey || null,
+            source: resolved.source,
+            reason: null,
+          },
+        },
+        { status: 200 },
+      );
     } else if (slackResult.error === "SLACK_NOT_CONFIGURED" || slackResult.error === "SLACK_DISABLED") {
       console.log("slack skip");
+      warnings.push(slackResult.error);
     } else {
       console.error("slack ko", { error: slackResult.error, details: slackResult.details });
+      warnings.push("SLACK_FAILED");
     }
   } else {
     console.log("slack skip", {
@@ -138,7 +183,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       slackDestinationKey: resolved.destinationKey,
       webhookSource: "none",
     });
+    warnings.push("SLACK_NOT_CONFIGURED");
   }
 
-  return jsonResponse({ ok: true, requestId }, { status: 200 });
+  return jsonResponse(
+    {
+      ok: true,
+      requestId,
+      warnings,
+      email: {
+        sent: emailSent,
+        toSource: emailToSource,
+        reason: emailSent ? null : emailToSource === "skip" ? "EMAIL_NOT_CONFIGURED" : "EMAIL_NOT_SENT",
+      },
+      slack: {
+        enabled: true,
+        sent: false,
+        destinationKey: slackDestinationKey,
+        reason: warnings.includes("SLACK_NOT_CONFIGURED") ? "SLACK_NOT_CONFIGURED" : warnings.includes("SLACK_FAILED") ? "SLACK_FAILED" : null,
+      },
+    },
+    { status: 200 },
+  );
 };
