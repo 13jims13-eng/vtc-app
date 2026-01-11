@@ -155,6 +155,13 @@ Cela met à jour `application_url` et `redirect_urls` dans `shopify.app.toml` av
 
 L'App Proxy `/apps/vtc/...` reste inchangé.
 
+## Mobile (iOS / Android)
+
+Un wrapper Expo (WebView) est disponible dans [vtc-app/mobile](vtc-app/mobile#L1).
+
+- Dév: `cd mobile && npm install && npm run start`
+- Config: définir `EXPO_PUBLIC_WIDGET_URL` (voir `mobile/.env.example`) vers une page Shopify qui contient le widget.
+
 ### Application Storage
 
 This template uses [Prisma](https://www.prisma.io/) to store session data, by default using an [SQLite](https://www.sqlite.org/index.html) database.

@@ -1,5 +1,12 @@
 node_modules
 
+# Expo mobile wrapper
+/mobile/node_modules/
+/mobile/.expo/
+/mobile/.expo-shared/
+/mobile/dist/
+/mobile/web-build/
+
 /.cache
 /build
 /app/build

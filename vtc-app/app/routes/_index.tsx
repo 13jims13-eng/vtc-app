@@ -1,6 +1,4 @@
-import { Link } from "react-router";
-import type { LoaderFunctionArgs } from "react-router";
-import { redirect } from "react-router";
+import { Link, redirect, type LoaderFunctionArgs } from "react-router";
 import { getOptionalUser } from "../lib/auth.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

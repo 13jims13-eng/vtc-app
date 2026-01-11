@@ -1,8 +1,10 @@
 import type { ActionFunctionArgs } from "react-router";
 import {
   buildBookingSummary,
+  isValidSingleEmail,
   sendBookingEmail,
   sendBookingEmailTo,
+  sendCustomerConfirmationEmail,
   sendSlackOptional,
   validateBookingSummary,
   type BookingNotifyRequestBody,
@@ -15,6 +17,20 @@ function jsonResponse(data: unknown, init?: ResponseInit) {
   headers.set("Content-Type", "application/json; charset=utf-8");
   headers.set("Cache-Control", "no-store");
   return new Response(JSON.stringify(data), { ...init, headers });
+}
+
+function maskEmail(value: string) {
+  const v = String(value || "").trim();
+  const at = v.indexOf("@");
+  if (at <= 0) return "";
+  const local = v.slice(0, at);
+  const domain = v.slice(at + 1);
+  const localMasked = local.length <= 2 ? `${local[0] || ""}*` : `${local.slice(0, 2)}***`;
+  const domainParts = domain.split(".");
+  const domainName = domainParts[0] || "";
+  const domainMasked = domainName ? `${domainName[0]}***` : "***";
+  const tld = domainParts.length > 1 ? domainParts.slice(1).join(".") : "";
+  return `${localMasked}@${domainMasked}${tld ? "." + tld : ""}`;
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -70,16 +86,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     // IMPORTANT: when called with a Shopify shop, prefer resolving email target from server-side config (Supabase).
-    // If not configured server-side, allow a theme-provided override (data-booking-email-to) for this signed App Proxy call.
+    // Theme setting is allowed and should be prioritized for the driver destination.
     if (shop) {
       const config = await getShopConfig(shop);
-      const bookingEmailTo = config?.bookingEmailTo || summary.bookingEmailToOverride || null;
 
-      emailToSource = config?.bookingEmailTo
-        ? "tenant"
-        : summary.bookingEmailToOverride
-          ? "widget"
-          : "skip";
+      const widgetTo = summary.bookingEmailToOverride || "";
+      const tenantTo = config?.bookingEmailTo || "";
+      const bookingEmailTo = isValidSingleEmail(widgetTo)
+        ? widgetTo
+        : isValidSingleEmail(tenantTo)
+          ? tenantTo
+          : null;
+
+      emailToSource = isValidSingleEmail(widgetTo) ? "widget" : isValidSingleEmail(tenantTo) ? "tenant" : "skip";
 
       if (bookingEmailTo) {
         const emailRes = await sendBookingEmailTo(summary, bookingEmailTo);
@@ -88,7 +107,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return jsonResponse({ ok: false, error: emailRes.error, requestId }, { status: 500 });
         }
         emailSent = true;
-        console.log("email ok", { toSource: emailToSource });
+        console.log("email ok", { toSource: emailToSource, toMasked: maskEmail(bookingEmailTo) });
+
+        // Keep customer confirmation email (non-blocking) so the client also receives a message.
+        try {
+          const customerEmail = String(summary.email || "").trim();
+          if (isValidSingleEmail(customerEmail) && customerEmail.toLowerCase() !== bookingEmailTo.toLowerCase()) {
+            const customerRes = await sendCustomerConfirmationEmail(summary);
+            if (customerRes.ok) {
+              console.log("customer email ok", { toMasked: maskEmail(customerEmail) });
+            } else {
+              console.log("customer email skip", { reason: customerRes.error });
+              warnings.push(customerRes.error);
+            }
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error("customer email ko", message.slice(0, 500));
+          warnings.push("CUSTOMER_EMAIL_FAILED");
+        }
       } else {
         console.log("email skip (tenant not configured)", { shop });
         warnings.push("EMAIL_NOT_CONFIGURED");
@@ -103,6 +140,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       emailSent = true;
       emailToSource = emailRes.toSource === "setting" ? "setting" : "env";
       console.log("email ok", { toSource: emailRes.toSource });
+
+      // Non-blocking customer confirmation email.
+      try {
+        const customerEmail = String(summary.email || "").trim();
+        if (isValidSingleEmail(customerEmail) && customerEmail.toLowerCase() !== String(emailRes.to || "").toLowerCase()) {
+          const customerRes = await sendCustomerConfirmationEmail(summary);
+          if (customerRes.ok) {
+            console.log("customer email ok", { toMasked: maskEmail(customerEmail) });
+          } else {
+            console.log("customer email skip", { reason: customerRes.error });
+            warnings.push(customerRes.error);
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("customer email ko", message.slice(0, 500));
+        warnings.push("CUSTOMER_EMAIL_FAILED");
+      }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

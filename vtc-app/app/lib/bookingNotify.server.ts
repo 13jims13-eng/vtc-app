@@ -476,6 +476,57 @@ export async function sendBookingEmailTo(summary: BookingSummary, to: string) {
   };
 }
 
+export async function sendCustomerConfirmationEmail(summary: BookingSummary) {
+  const to = cleanText(summary.email);
+  if (!isValidSingleEmail(to)) {
+    return { ok: false as const, error: "CUSTOMER_EMAIL_INVALID" as const };
+  }
+
+  const emailConfig = getEmailConfigExplicit(to);
+  if (!emailConfig.configured) {
+    return {
+      ok: false as const,
+      error: "EMAIL_NOT_CONFIGURED" as const,
+      missing: emailConfig.missing,
+    };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: emailConfig.host,
+    port: emailConfig.port,
+    secure: emailConfig.secure,
+    auth: { user: emailConfig.user, pass: emailConfig.pass },
+  });
+
+  const subject = "Confirmation — demande de réservation VTC";
+  const text = [
+    "Bonjour,",
+    "",
+    "Nous avons bien reçu votre demande de réservation.",
+    "Nous vous recontactons rapidement pour confirmer le trajet.",
+    "",
+    "Récapitulatif:",
+    summary.text,
+  ].join("\n");
+
+  const html = [
+    "<p>Bonjour,</p>",
+    "<p>Nous avons bien reçu votre demande de réservation.<br/>Nous vous recontactons rapidement pour confirmer le trajet.</p>",
+    "<hr/>",
+    summary.html,
+  ].join("");
+
+  await transporter.sendMail({
+    from: emailConfig.from,
+    to: emailConfig.to,
+    subject,
+    text,
+    html,
+  });
+
+  return { ok: true as const, to: emailConfig.to };
+}
+
 export async function sendSlackOptional(
   text: string,
   options?: { enabled?: boolean; webhookUrl?: string | null },

@@ -1276,6 +1276,15 @@ async function postBookingNotify(payload) {
 
       if (!resp.ok) {
         const msg = (() => {
+          // If the server returned a structured error code, surface it with a helpful message.
+          const errCode = data?.error ? String(data.error) : "";
+          if (errCode === "EMAIL_NOT_CONFIGURED") {
+            return "Email non configuré côté application (SMTP_* / BOOKING_EMAIL_FROM).";
+          }
+          if (errCode === "EMAIL_FAILED") {
+            return "Erreur lors de l'envoi de l'e-mail côté application.";
+          }
+          if (errCode) return errCode;
           if (resp.status === 400 && data?.error) return String(data.error);
           if (resp.status === 400 && data?.reason) return `Accès refusé (App Proxy) [${String(data.reason)}]`;
           if (resp.status === 401) return "Accès refusé (App Proxy / signature invalide).";

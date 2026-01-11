@@ -1,8 +1,7 @@
-import type { LoaderFunctionArgs } from "react-router";
 import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData } from "react-router";
 import { getPublicEnvForClient } from "./lib/supabaseEnv.server";
 
-export const loader = async (_args: LoaderFunctionArgs) => {
+export const loader = async () => {
   return { ENV: getPublicEnvForClient() };
 };
 

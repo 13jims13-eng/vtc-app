@@ -3,8 +3,6 @@ import { Form, Link, redirect, useActionData } from "react-router";
 import { getOptionalUser } from "../lib/auth.server";
 import { createSupabaseServerClient } from "../lib/supabase.server";
 
-type ActionData = { ok: false; error: string } | { ok: true; notice: string };
-
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { user, headers } = await getOptionalUser(request);
   if (user) throw redirect("/dashboard", { headers });

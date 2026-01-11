@@ -59,11 +59,16 @@
       {% assign quote_only_id = 'vehicle_' | append: i | append: '_quote_only' %}
       {% assign image_id = 'vehicle_' | append: i | append: '_image' %}
 
+            {% assign computed_vehicle_id = block.settings[id_id] | default: '' | strip %}
+            {% if computed_vehicle_id == blank %}
+                {% assign computed_vehicle_id = 'vehicle_' | append: i %}
+            {% endif %}
+
     {% assign vehicle_image = block.settings[image_id] %}
 
       {% if first_vehicle %}{% assign first_vehicle = false %}{% else %},{% endif %}
       {
-        "id": {{ block.settings[id_id] | default: '' | strip | json }},
+                "id": {{ computed_vehicle_id | json }},
         "label": {{ block.settings[label_id] | default: '' | strip | json }},
         "baseFare": {{ block.settings[base_fare_id] | default: '' | strip | json }},
         "pricePerKm": {{ block.settings[price_per_km_id] | default: '' | strip | json }},
@@ -424,11 +429,11 @@
                     "label": "Véhicule #4 activé",
                     "default": false
                 },
-                { "type": "text", "id": "vehicle_4_id", "label": "Véhicule #4 — ID", "default": "vehicle_4" },
                 { "type": "text", "id": "vehicle_4_label", "label": "Véhicule #4 — Libellé", "default": "Véhicule 4" },
                 { "type": "text", "id": "vehicle_4_base_fare", "label": "Véhicule #4 — Base fare", "default": "0" },
                 { "type": "text", "id": "vehicle_4_price_per_km", "label": "Véhicule #4 — Prix par km", "default": "0" },
                 { "type": "checkbox", "id": "vehicle_4_quote_only", "label": "Véhicule #4 — Sur devis", "default": false },
+                { "type": "image_picker", "id": "vehicle_4_image", "label": "Véhicule #4 — Image" },
 
                 {
                     "type": "checkbox",
@@ -436,11 +441,11 @@
                     "label": "Véhicule #5 activé",
                     "default": false
                 },
-                { "type": "text", "id": "vehicle_5_id", "label": "Véhicule #5 — ID", "default": "vehicle_5" },
                 { "type": "text", "id": "vehicle_5_label", "label": "Véhicule #5 — Libellé", "default": "Véhicule 5" },
                 { "type": "text", "id": "vehicle_5_base_fare", "label": "Véhicule #5 — Base fare", "default": "0" },
                 { "type": "text", "id": "vehicle_5_price_per_km", "label": "Véhicule #5 — Prix par km", "default": "0" },
                 { "type": "checkbox", "id": "vehicle_5_quote_only", "label": "Véhicule #5 — Sur devis", "default": false },
+                { "type": "image_picker", "id": "vehicle_5_image", "label": "Véhicule #5 — Image" },
 
                 {
                     "type": "checkbox",
@@ -448,11 +453,11 @@
                     "label": "Véhicule #6 activé",
                     "default": false
                 },
-                { "type": "text", "id": "vehicle_6_id", "label": "Véhicule #6 — ID", "default": "vehicle_6" },
                 { "type": "text", "id": "vehicle_6_label", "label": "Véhicule #6 — Libellé", "default": "Véhicule 6" },
                 { "type": "text", "id": "vehicle_6_base_fare", "label": "Véhicule #6 — Base fare", "default": "0" },
                 { "type": "text", "id": "vehicle_6_price_per_km", "label": "Véhicule #6 — Prix par km", "default": "0" },
                 { "type": "checkbox", "id": "vehicle_6_quote_only", "label": "Véhicule #6 — Sur devis", "default": false },
+                { "type": "image_picker", "id": "vehicle_6_image", "label": "Véhicule #6 — Image" },
 
                 {
                     "type": "header",

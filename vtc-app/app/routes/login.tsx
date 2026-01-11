@@ -4,7 +4,6 @@ import { getOptionalUser } from "../lib/auth.server";
 import { createSupabaseServerClient } from "../lib/supabase.server";
 
 type LoaderData = { errorFromQuery: string | null };
-type ActionData = { ok: false; error: string } | { ok: true; notice: string };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { user, headers } = await getOptionalUser(request);
