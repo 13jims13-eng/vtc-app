@@ -1,0 +1,14 @@
+{
+  // This repo contains legacy/duplicate apps. Exclude them from TS Server
+  // so VS Code doesn't surface type errors from folders we don't build.
+  "typescript.tsserver.exclude": [
+    "_BACKUP/**",
+    "app/**",
+    "vtc-calculateur-de-trajets/**"
+  ],
+
+  // Keep ESLint scoped to the real app.
+  "eslint.workingDirectories": [
+    { "directory": "vtc-app", "changeProcessCWD": true }
+  ]
+}
