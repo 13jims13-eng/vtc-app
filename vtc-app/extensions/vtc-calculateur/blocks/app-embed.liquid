@@ -1,0 +1,30 @@
+<script src="{{ 'vtc-booking.js' | asset_url }}" defer></script>
+
+{%- comment -%}
+  Conteneur stable (optionnel) : le widget principal est généralement ajouté via le bloc.
+  Cet embed sert surtout à charger le script globalement via le toggle "Intégrations d’applications".
+
+  IMPORTANT:
+  Le JS lit ses paramètres via dataset sur #vtc-widget ou #vtc-smart-booking-widget.
+  Sans la clé Google, Places/Autocomplete ne peut pas fonctionner.
+{%- endcomment -%}
+<div
+  id="vtc-smart-booking-widget"
+  style="display:none"
+  data-google-maps-api-key="{{ settings.google_maps_api_key | escape }}"
+></div>
+
+{% schema %}
+{
+  "name": "VTC – Calculateur (Embed)",
+  "target": "body",
+  "settings": [
+    {
+      "type": "text",
+      "id": "google_maps_api_key",
+      "label": "Clé API Google Maps",
+      "default": "REPLACE_WITH_YOUR_GOOGLE_MAPS_API_KEY"
+    }
+  ]
+}
+{% endschema %}

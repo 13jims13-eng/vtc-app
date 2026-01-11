@@ -13,7 +13,15 @@ database.sqlite
 .env
 .env.*
 
+# Shopify CLI dev logs
+# Keep example env files tracked
+!.env.example
+!.env.production.example
+.shopify-dev*.log
 
+ /prisma/dev.sqlite*
+
+database.sqlite*
 
 
 

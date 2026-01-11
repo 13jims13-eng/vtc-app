@@ -38,13 +38,27 @@ shopify app dev
 
 ### VTC – Slack booking
 
-Le message Slack est envoyé uniquement au clic sur **"Réserver mon trajet"** (côté serveur, via Incoming Webhook).
+Le message Slack est envoyé uniquement au clic sur **"Réserver mon trajet"** (côté serveur).
 
-- Crée un fichier `.env` (ignoré par git) à la racine de ce dossier (à côté de `package.json`), basé sur `.env.example`.
-- Renseigne `SLACK_WEBHOOK_URL`.
-- Si `SLACK_WEBHOOK_URL` est absent, l'API renverra `500` avec `{ ok:false, error:"SLACK_WEBHOOK_URL missing" }` et loguera l'erreur.
+- La configuration Slack se fait dans l’admin de l’app: `/app/settings/slack`.
+- Les webhooks Slack sont stockés **chiffrés** en base (AES-256-GCM) via `CONFIG_ENCRYPTION_KEY`.
+- Le thème ne doit contenir aucun webhook / token.
+- `SLACK_WEBHOOK_URL` peut être utilisé comme **fallback DEV** uniquement (si aucune config DB n’existe).
 
 Press P to open the URL to your app. Once you click install, you can start development.
+
+### VTC – Pricing (Immédiat vs Réservation)
+
+Dans le **Theme Editor**, sur le bloc du widget (extension `vtc-calculateur`) :
+
+- `Comportement pricing global`:
+  - `Normal — Tarifs`: comportement actuel.
+  - `Tout sur devis`: affiche toujours “Sur devis” (quel que soit le véhicule).
+  - `Immédiat vs Réservation (délai)`: classe le trajet selon le délai avant départ, et peut appliquer une majoration “Immédiat”.
+- `Seuil (minutes)`: si le départ est à moins de ce seuil, le trajet est considéré “Immédiat”, sinon “Réservation”.
+- `Majoration Immédiat` (si activée):
+  - `+ montant sur la base (€)` et/ou `+ % sur la base` (appliqués sur la base du véhicule)
+  - `+ % sur le total` (optionnel, appliqué en dernier)
 
 Local development is powered by [the Shopify CLI](https://shopify.dev/docs/apps/tools/cli). It logs into your partners account, connects to an app, provides environment variables, updates remote config, creates a tunnel and provides commands to generate extensions.
 
@@ -91,6 +105,55 @@ This template is configured with the Shopify Dev MCP. This instructs [Cursor](ht
 For more information on the Shopify Dev MCP please read [the  documentation](https://shopify.dev/docs/apps/build/devmcp).
 
 ## Deployment
+
+### Render (production) — URL stable
+
+Ce projet est prêt à être déployé sur Render avec une URL stable.
+
+- Blueprint: utilisez [render.yaml](../render.yaml) (le service pointe sur le sous-dossier `vtc-calculateur-de-trajets`).
+- Build command: `npm ci && npm run build`
+- Start command: `npm run docker-start` (exécute `prisma generate` + `prisma migrate deploy` puis démarre le serveur)
+- Port: le serveur écoute sur `process.env.PORT` (fallback 3000 géré par `react-router-serve`).
+
+#### Variables d'env à configurer sur Render
+
+- URL publique:
+  - `APP_URL` (ex: `https://votre-app.onrender.com`) — utilisée par l'app si `SHOPIFY_APP_URL` n'est pas fourni.
+- Shopify (obligatoire):
+  - `SHOPIFY_API_KEY`
+  - `SHOPIFY_API_SECRET`
+  - `SCOPES`
+  - `DATABASE_URL`
+- Email (si notifications email requises):
+  - `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`
+  - `BOOKING_EMAIL_FROM`, `BOOKING_EMAIL_TO`
+- Slack (optionnel):
+  - `CONFIG_ENCRYPTION_KEY`
+  - (fallback DEV uniquement) `SLACK_WEBHOOK_URL`
+
+#### Après déploiement Render (mise à jour Shopify)
+
+Une fois l'URL Render connue, il faut que Shopify (Partners/CLI) pointe sur cette URL, sinon vous verrez typiquement une page "Example Domain" et des erreurs App Proxy.
+
+1) Mettre `APP_URL` (l'URL Render) dans votre shell puis synchroniser le fichier de config:
+
+```bash
+APP_URL=https://votre-app.onrender.com npm run sync:shopify-url
+```
+
+2) Déployer la config Shopify:
+
+```bash
+shopify app deploy
+```
+
+Cela met à jour `application_url` et `redirect_urls` dans `shopify.app.toml` avec:
+
+- `${APP_URL}/auth/callback`
+- `${APP_URL}/auth/shopify/callback`
+- `${APP_URL}/api/auth/callback`
+
+L'App Proxy `/apps/vtc/...` reste inchangé.
 
 ### Application Storage
 

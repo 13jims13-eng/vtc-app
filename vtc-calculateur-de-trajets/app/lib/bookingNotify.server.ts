@@ -14,11 +14,17 @@ export type BookingNotifyRequestBody = {
     pickupDate?: string;
     pickupTime?: string;
     vehicle?: string;
+    vehicleLabel?: string;
     isQuote?: boolean;
     petOption?: boolean;
     babySeatOption?: boolean;
+    options?: unknown[];
+    optionsTotalFee?: number;
     customOption?: string;
     price?: number;
+    pricingMode?: string;
+    leadTimeThresholdMinutes?: number | null;
+    surchargesApplied?: unknown;
     distanceKm?: number;
     durationMinutes?: number;
   };
@@ -28,6 +34,8 @@ export type BookingNotifyRequestBody = {
   };
   config?: {
     bookingEmailTo?: string;
+    slackEnabled?: boolean;
+    slackDestination?: string;
   };
 };
 
@@ -40,6 +48,9 @@ export type BookingSummary = {
   stops: string[];
   isQuote: boolean;
   price: number | null;
+  pricingMode?: string | null;
+  leadTimeThresholdMinutes?: number | null;
+  surchargesApplied?: unknown;
   distanceKm: number | null;
   durationMinutes: number | null;
   name: string;
@@ -79,6 +90,27 @@ export function isValidSingleEmail(value: string) {
   return /^\S+@\S+\.\S+$/.test(v);
 }
 
+export function validateSlackWebhookUrl(value: string):
+  | { ok: true; normalized: string }
+  | { ok: false; reason: "EMPTY" | "NOT_HTTPS" | "INVALID_URL" | "INVALID_PREFIX" } {
+  const v = value.trim();
+  if (!v) return { ok: false, reason: "EMPTY" };
+
+  let url: URL;
+  try {
+    url = new URL(v);
+  } catch {
+    return { ok: false, reason: "INVALID_URL" };
+  }
+
+  if (url.protocol !== "https:") return { ok: false, reason: "NOT_HTTPS" };
+  if (!v.startsWith("https://hooks.slack.com/services/")) {
+    return { ok: false, reason: "INVALID_PREFIX" };
+  }
+
+  return { ok: true, normalized: v };
+}
+
 export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSummary {
   const contact = body?.contact || {};
   const trip = body?.trip || {};
@@ -89,6 +121,7 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
   const pickupDate = cleanText(trip?.pickupDate);
   const pickupTime = cleanText(trip?.pickupTime);
   const vehicle = cleanText(trip?.vehicle);
+  const vehicleLabel = cleanText(trip?.vehicleLabel);
 
   const stopsRaw = Array.isArray(trip?.stops)
     ? trip.stops
@@ -101,6 +134,14 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
   const isQuote = vehicle === "autre" || !!trip?.isQuote;
   const price = typeof trip?.price === "number" ? trip.price : null;
 
+  const pricingModeRaw = cleanText((trip as { pricingMode?: unknown })?.pricingMode);
+  const pricingMode = pricingModeRaw || null;
+  const leadTimeThresholdMinutes =
+    typeof (trip as { leadTimeThresholdMinutes?: unknown })?.leadTimeThresholdMinutes === "number"
+      ? ((trip as { leadTimeThresholdMinutes: number }).leadTimeThresholdMinutes ?? null)
+      : null;
+  const surchargesApplied = (trip as { surchargesApplied?: unknown })?.surchargesApplied ?? null;
+
   const distanceKm = typeof trip?.distanceKm === "number" ? trip.distanceKm : null;
   const durationMinutes = typeof trip?.durationMinutes === "number" ? trip.durationMinutes : null;
 
@@ -110,6 +151,22 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
 
   const petOption = !!trip?.petOption;
   const babySeatOption = !!trip?.babySeatOption;
+
+  const optionsRaw = Array.isArray(trip?.options) ? trip.options : [];
+  const options = optionsRaw
+    .map((o) => {
+      const obj = (o || {}) as { id?: unknown; label?: unknown; fee?: unknown };
+      const id = cleanText(obj.id);
+      const label = cleanText(obj.label);
+      const fee = typeof obj.fee === "number" ? obj.fee : null;
+      return {
+        id,
+        label,
+        fee,
+      };
+    })
+    .filter((o) => !!o.id || !!o.label);
+
   const customOption = cleanText(trip?.customOption);
 
   const termsConsent = !!consents?.termsConsent;
@@ -128,6 +185,53 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
 
   const dateTimeText = `${pickupDate}${pickupTime ? ` ${pickupTime}` : ""}`;
 
+  const vehicleText = vehicleLabel ? `${vehicleLabel}${vehicle ? ` (${vehicle})` : ""}` : vehicle;
+
+  const pricingModeText =
+    pricingMode === "immediate"
+      ? "Immédiat"
+      : pricingMode === "reservation"
+        ? "Réservation"
+        : pricingMode === "all_quote"
+          ? "Tout sur devis"
+          : pricingMode;
+
+  const surchargesText = (() => {
+    if (!surchargesApplied || typeof surchargesApplied !== "object") return "";
+    const obj = surchargesApplied as {
+      kind?: unknown;
+      baseDeltaAmount?: unknown;
+      baseDeltaPercent?: unknown;
+      totalDeltaPercent?: unknown;
+    };
+
+    const kind = cleanText(obj.kind);
+    if (!kind) return "";
+
+    const baseDeltaAmount = typeof obj.baseDeltaAmount === "number" ? obj.baseDeltaAmount : null;
+    const baseDeltaPercent = typeof obj.baseDeltaPercent === "number" ? obj.baseDeltaPercent : null;
+    const totalDeltaPercent = typeof obj.totalDeltaPercent === "number" ? obj.totalDeltaPercent : null;
+
+    const parts: string[] = [];
+    if (typeof baseDeltaAmount === "number" && baseDeltaAmount !== 0) parts.push(`+${baseDeltaAmount.toFixed(2)}€ (base)`);
+    if (typeof baseDeltaPercent === "number" && baseDeltaPercent !== 0) parts.push(`+${baseDeltaPercent}% (base)`);
+    if (typeof totalDeltaPercent === "number" && totalDeltaPercent !== 0) parts.push(`+${totalDeltaPercent}% (total)`);
+
+    if (!parts.length) return kind;
+    return `${kind}: ${parts.join(", ")}`;
+  })();
+
+  const optionsText = options.length
+    ? options
+        .map((o) => {
+          const name = o.label || o.id;
+          if (!name) return "";
+          return typeof o.fee === "number" ? `${name} (+${o.fee.toFixed(2)} €)` : name;
+        })
+        .filter(Boolean)
+        .join(" | ")
+    : `animal=${petOption ? "oui" : "non"}, siège bébé=${babySeatOption ? "oui" : "non"}`;
+
   const text = [
     "Nouvelle réservation VTC",
     "",
@@ -135,22 +239,36 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     `Arrivée: ${end || "(non précisé)"}`,
     `Arrêts: ${stops.length ? stops.join(" | ") : "(aucun)"}`,
     `Date/Heure: ${dateTimeText || "(non précisé)"}`,
-    `Véhicule: ${vehicle || "(non précisé)"}`,
-    `Options: animal=${petOption ? "oui" : "non"}, siège bébé=${babySeatOption ? "oui" : "non"}`,
-    `Option personnalisée: ${customOption || "(aucune)"}`,
+    pricingModeText ? `Type: ${pricingModeText}${typeof leadTimeThresholdMinutes === "number" ? ` (seuil ${leadTimeThresholdMinutes} min)` : ""}` : null,
+    surchargesText ? `Majorations: ${surchargesText}` : null,
+    `Véhicule: ${vehicleText || "(non précisé)"}`,
+    `Options: ${optionsText}`,
+    customOption ? `Option personnalisée: ${customOption}` : null,
     `Distance/Durée: ${distanceText} / ${durationText}`,
-    `Prix: ${priceText}`,
+    `Tarif: ${priceText}`,
     "",
     `Client: ${name || "(non précisé)"}`,
     `Email: ${email || "(non précisé)"}`,
     `Téléphone: ${phone || "(non précisé)"}`,
     "",
     `Consentements: CGU/Privacy=${termsConsent ? "oui" : "non"}, Marketing=${marketingConsent ? "oui" : "non"}`,
-  ].join("\n");
+  ]
+    .filter((line): line is string => typeof line === "string" && !!line)
+    .join("\n");
 
   const htmlStops = stops.length
     ? `<ul>${stops.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ul>`
     : "<p>(aucun)</p>";
+
+  const htmlOptions = options.length
+    ? `<ul>${options
+        .map((o) => {
+          const name = o.label || o.id || "";
+          const suffix = typeof o.fee === "number" ? ` (+${o.fee.toFixed(2)} €)` : "";
+          return `<li>${escapeHtml(`${name}${suffix}`)}</li>`;
+        })
+        .join("")}</ul>`
+    : `<p>animal=${petOption ? "oui" : "non"}, siège bébé=${babySeatOption ? "oui" : "non"}</p>`;
 
   const html = `
     <h2>Nouvelle réservation VTC</h2>
@@ -160,11 +278,14 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     <p><b>Arrêts:</b></p>
     ${htmlStops}
     <p><b>Date/Heure:</b> ${escapeHtml(dateTimeText || "(non précisé)")}</p>
-    <p><b>Véhicule:</b> ${escapeHtml(vehicle || "(non précisé)")}</p>
-    <p><b>Options:</b> animal=${petOption ? "oui" : "non"}, siège bébé=${babySeatOption ? "oui" : "non"}</p>
-    <p><b>Option personnalisée:</b> ${escapeHtml(customOption || "(aucune)")}</p>
+    ${pricingModeText ? `<p><b>Type:</b> ${escapeHtml(pricingModeText)}${typeof leadTimeThresholdMinutes === "number" ? ` (seuil ${escapeHtml(String(leadTimeThresholdMinutes))} min)` : ""}</p>` : ""}
+    ${surchargesText ? `<p><b>Majorations:</b> ${escapeHtml(surchargesText)}</p>` : ""}
+    <p><b>Véhicule:</b> ${escapeHtml(vehicleText || "(non précisé)")}</p>
+    <p><b>Options:</b></p>
+    ${htmlOptions}
+    ${customOption ? `<p><b>Option personnalisée:</b> ${escapeHtml(customOption)}</p>` : ""}
     <p><b>Distance/Durée:</b> ${escapeHtml(distanceText)} / ${escapeHtml(durationText)}</p>
-    <p><b>Prix:</b> ${escapeHtml(priceText)}</p>
+    <p><b>Tarif:</b> ${escapeHtml(priceText)}</p>
     <h3>Client</h3>
     <p><b>Nom:</b> ${escapeHtml(name || "(non précisé)")}</p>
     <p><b>Email:</b> ${escapeHtml(email || "(non précisé)")}</p>
@@ -182,6 +303,9 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
     stops,
     isQuote,
     price,
+    pricingMode,
+    leadTimeThresholdMinutes,
+    surchargesApplied,
     distanceKm,
     durationMinutes,
     name,
@@ -226,17 +350,19 @@ export function getEmailConfig(emailToOverride?: string) {
 
   const port = portRaw ? Number(portRaw) : NaN;
 
-  const configured =
-    !!host &&
-    Number.isFinite(port) &&
-    port > 0 &&
-    !!from &&
-    !!to &&
-    !!user &&
-    !!pass;
+  const missing: string[] = [];
+  if (!host) missing.push("SMTP_HOST");
+  if (!portRaw || !Number.isFinite(port) || port <= 0) missing.push("SMTP_PORT");
+  if (!user) missing.push("SMTP_USER");
+  if (!pass) missing.push("SMTP_PASS");
+  if (!from) missing.push("BOOKING_EMAIL_FROM");
+  if (!to) missing.push("BOOKING_EMAIL_TO");
+
+  const configured = missing.length === 0;
 
   return {
     configured,
+    missing,
     host,
     port,
     secure,
@@ -251,7 +377,11 @@ export function getEmailConfig(emailToOverride?: string) {
 export async function sendBookingEmail(summary: BookingSummary) {
   const emailConfig = getEmailConfig(summary.bookingEmailToOverride);
   if (!emailConfig.configured) {
-    return { ok: false as const, error: "EMAIL_NOT_CONFIGURED" as const };
+    return {
+      ok: false as const,
+      error: "EMAIL_NOT_CONFIGURED" as const,
+      missing: emailConfig.missing,
+    };
   }
 
   const transporter = nodemailer.createTransport({
@@ -277,8 +407,18 @@ export async function sendBookingEmail(summary: BookingSummary) {
   };
 }
 
-export async function sendSlackOptional(text: string) {
-  const webhook = cleanText(process.env.SLACK_WEBHOOK_URL);
+export async function sendSlackOptional(
+  text: string,
+  options?: { enabled?: boolean; webhookUrl?: string | null },
+) {
+  if (options?.enabled === false) {
+    return { ok: false as const, error: "SLACK_DISABLED" as const };
+  }
+
+  const hasOverride = !!options && Object.prototype.hasOwnProperty.call(options, "webhookUrl");
+  const webhook = hasOverride
+    ? cleanText(options.webhookUrl)
+    : cleanText(process.env.SLACK_WEBHOOK_URL);
   if (!webhook) return { ok: false as const, error: "SLACK_NOT_CONFIGURED" as const };
 
   try {
@@ -305,11 +445,14 @@ export async function sendSlackOptional(text: string) {
   }
 }
 
-export async function sendSlackRequired(text: string) {
-  const webhook = cleanText(process.env.SLACK_WEBHOOK_URL);
+export async function sendSlackRequired(text: string, options?: { webhookUrl?: string | null }) {
+  const hasOverride = !!options && Object.prototype.hasOwnProperty.call(options, "webhookUrl");
+  const webhook = hasOverride
+    ? cleanText(options.webhookUrl)
+    : cleanText(process.env.SLACK_WEBHOOK_URL);
   if (!webhook) return { ok: false as const, error: "SLACK_WEBHOOK_URL missing" as const };
 
-  const res = await sendSlackOptional(text);
+  const res = await sendSlackOptional(text, { webhookUrl: webhook });
   if (res.ok) return { ok: true as const };
 
   if (res.error === "SLACK_NOT_CONFIGURED") {

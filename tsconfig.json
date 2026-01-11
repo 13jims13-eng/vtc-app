@@ -1,7 +1,4 @@
 {
-  "compilerOptions": {
-    "noEmit": true
-  },
-  "include": ["app/**/*", "server.ts", "shopify.web.toml", "vite.config.ts"],
-  "exclude": ["vtc-calculateur-de-trajets/**", "_BACKUP/**", "node_modules/**"]
+  "files": [],
+  "references": [{ "path": "./vtc-app" }]
 }

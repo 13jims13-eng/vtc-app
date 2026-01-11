@@ -1,46 +1,122 @@
+{% assign vtc_booking_email_to = block.settings.booking_email_to | strip %}
+
+{% comment %}Vehicles JSON config (preferred by vtc-booking.js).{% endcomment %}
+{% assign display_mode = block.settings.display_mode | strip %}
+{% if display_mode == blank %}{% assign display_mode = 'A' %}{% endif %}
+
+{% assign pricing_behavior = block.settings.pricing_behavior | strip %}
+{% if pricing_behavior == blank %}{% assign pricing_behavior = 'normal_prices' %}{% endif %}
+
+{% assign lead_time_threshold_minutes = block.settings.lead_time_threshold_minutes %}
+{% if lead_time_threshold_minutes == blank %}{% assign lead_time_threshold_minutes = 120 %}{% endif %}
+
+{% assign immediate_label = block.settings.immediate_label | strip %}
+{% if immediate_label == blank %}{% assign immediate_label = 'Immédiat' %}{% endif %}
+{% assign reservation_label = block.settings.reservation_label | strip %}
+{% if reservation_label == blank %}{% assign reservation_label = 'Réservation' %}{% endif %}
+
+{% assign immediate_surcharge_enabled = block.settings.immediate_surcharge_enabled %}
+{% assign immediate_base_delta_amount = block.settings.immediate_base_delta_amount %}
+{% assign immediate_base_delta_percent = block.settings.immediate_base_delta_percent %}
+{% assign immediate_total_delta_percent = block.settings.immediate_total_delta_percent %}
+
+{% assign options_display_mode = block.settings.options_display_mode | default: 'before_calc' | strip %}
+
+{% capture options_config_json %}
+    [
+    {% assign first_opt = true %}
+    {% for i in (1..6) %}
+        {% assign enabled_id = 'option_' | append: i | append: '_enabled' %}
+        {% if block.settings[enabled_id] %}
+            {% assign label_id = 'option_' | append: i | append: '_label' %}
+            {% assign price_id = 'option_' | append: i | append: '_price' %}
+            {% assign option_id = 'option_' | append: i %}
+            {% assign opt_label = block.settings[label_id] | strip %}
+            {% if opt_label != blank %}
+                {% if first_opt %}{% assign first_opt = false %}{% else %},{% endif %}
+                {
+                    "id": {{ option_id | json }},
+                    "label": {{ opt_label | json }},
+                    "type": {{ 'fixed' | json }},
+                    "amount": {{ block.settings[price_id] | default: 0 | plus: 0 | json }}
+                }
+            {% endif %}
+        {% endif %}
+    {% endfor %}
+    ]
+{% endcapture %}
+
+{% capture vehicles_json %}
+  [
+  {% assign first_vehicle = true %}
+  {% for i in (1..6) %}
+    {% assign enabled_id = 'vehicle_' | append: i | append: '_enabled' %}
+    {% if block.settings[enabled_id] %}
+      {% assign id_id = 'vehicle_' | append: i | append: '_id' %}
+      {% assign label_id = 'vehicle_' | append: i | append: '_label' %}
+      {% assign base_fare_id = 'vehicle_' | append: i | append: '_base_fare' %}
+      {% assign price_per_km_id = 'vehicle_' | append: i | append: '_price_per_km' %}
+      {% assign quote_only_id = 'vehicle_' | append: i | append: '_quote_only' %}
+      {% assign image_id = 'vehicle_' | append: i | append: '_image' %}
+
+    {% assign vehicle_image = block.settings[image_id] %}
+
+      {% if first_vehicle %}{% assign first_vehicle = false %}{% else %},{% endif %}
+      {
+        "id": {{ block.settings[id_id] | default: '' | strip | json }},
+        "label": {{ block.settings[label_id] | default: '' | strip | json }},
+        "baseFare": {{ block.settings[base_fare_id] | default: '' | strip | json }},
+        "pricePerKm": {{ block.settings[price_per_km_id] | default: '' | strip | json }},
+        "quoteOnly": {% if block.settings[quote_only_id] %}true{% else %}false{% endif %},
+        "imageUrl": {% if vehicle_image != blank %}{{ vehicle_image | image_url | json }}{% else %}{{ '' | json }}{% endif %}
+      }
+    {% endif %}
+  {% endfor %}
+  ]
+{% endcapture %}
+
+{% capture widget_config_json %}
+  {
+    "displayMode": {{ display_mode | json }},
+    "pricingBehavior": {{ pricing_behavior | json }},
+    "leadTimeThresholdMinutes": {{ lead_time_threshold_minutes | json }},
+    "immediateLabel": {{ immediate_label | json }},
+    "reservationLabel": {{ reservation_label | json }},
+    "immediateSurchargeEnabled": {% if immediate_surcharge_enabled %}true{% else %}false{% endif %},
+    "immediateBaseDeltaAmount": {{ immediate_base_delta_amount | default: 0 | json }},
+    "immediateBaseDeltaPercent": {{ immediate_base_delta_percent | default: 0 | json }},
+    "immediateTotalDeltaPercent": {{ immediate_total_delta_percent | default: 0 | json }},
+    "stopFee": {{ block.settings.stop_fee | default: '' | strip | json }},
+    "quoteMessage": {{ block.settings.quote_message | default: '' | strip | json }},
+    "vehicles": {{ vehicles_json | strip_newlines }},
+    "options": []
+  }
+{% endcapture %}
+
 <div
-    id="vtc-smart-booking-widget"
+    id="vtc-widget"
     class="vtc-widget"
-    {% assign vtc_notify_endpoint = block.settings.notify_endpoint_url | strip %}
-    {% assign vtc_slack_endpoint = block.settings.slack_endpoint_url | strip %}
-    {% assign vtc_effective_endpoint = vtc_notify_endpoint %}
-    {% if vtc_effective_endpoint == blank %}{% assign vtc_effective_endpoint = vtc_slack_endpoint %}{% endif %}
-    data-notify-endpoint="{% if vtc_effective_endpoint != blank and vtc_effective_endpoint contains 'hooks.slack.com' %}{% elsif vtc_effective_endpoint != blank %}{{ vtc_effective_endpoint }}{% endif %}"
-    data-slack-endpoint="{% if vtc_slack_endpoint != blank and vtc_slack_endpoint contains 'hooks.slack.com' %}{% elsif vtc_slack_endpoint != blank %}{{ vtc_slack_endpoint }}{% endif %}"
-    {% assign vtc_booking_email_to = block.settings.booking_email_to | strip %}
     data-booking-email-to="{% if vtc_booking_email_to != blank %}{{ vtc_booking_email_to }}{% endif %}"
-    data-berline-img="{% if block.settings.berline_image != blank %}{{ block.settings.berline_image | image_url }}{% endif %}"
-    data-van-img="{% if block.settings.van_image != blank %}{{ block.settings.van_image | image_url }}{% endif %}"
-    data-autre-img="{% if block.settings.autre_image != blank %}{{ block.settings.autre_image | image_url }}{% endif %}"
+    data-google-maps-api-key="{{ block.settings.google_maps_api_key | escape }}"
+    data-stop-fee="{{ block.settings.stop_fee }}"
+    data-quote-message="{{ block.settings.quote_message | escape }}"
+    data-slack-enabled="{{ block.settings.slack_enabled }}"
+    data-slack-destination="{{ block.settings.slack_destination | escape }}"
+    data-options-display-mode="{{ options_display_mode }}"
+    data-options-config='{{ options_config_json | strip_newlines | escape }}'
+    data-config='{{ widget_config_json | strip_newlines | escape }}'
 >
 
-    <h2 class="vtc-title">VTC Smart Booking</h2>
+    {% assign vtc_widget_title = block.settings.widget_title | strip %}
+    {% if vtc_widget_title == blank %}{% assign vtc_widget_title = 'VTC Smart Booking' %}{% endif %}
+
+    <h2 class="vtc-title">{{ vtc_widget_title }}</h2>
     <p class="vtc-subtitle">Obtenez une estimation instantanée de votre trajet.</p>
 
     <!-- TYPE DE VÉHICULE -->
     <div class="vtc-section">
         <label class="vtc-label">Type de véhicule :</label>
-        <div class="vtc-radio-group">
-            <label><input type="radio" name="vehicle" value="berline" checked> Berline</label>
-            <label><input type="radio" name="vehicle" value="van"> Van 7 places</label>
-            <label><input type="radio" name="vehicle" value="autre"> Autre (sur devis)</label>
-        </div>
-    </div>
-
-    <!-- OPTIONS -->
-    <div class="vtc-section">
-        <label class="vtc-label">Options :</label>
-
-        <label class="vtc-checkbox">
-            <input type="checkbox" id="petOption"> Animal de compagnie (+20 €)
-        </label>
-
-        <label class="vtc-checkbox">
-            <input type="checkbox" id="babySeatOption"> Siège bébé (+15 €)
-        </label>
-
-        <label class="vtc-label">Option personnalisée :</label>
-        <input id="customOption" type="text" placeholder="Ex : plusieurs vans, car, demande spéciale…" class="vtc-input">
+        <div id="vtc-vehicles" class="vtc-radio-group"></div>
     </div>
 
     <!-- ADRESSES -->
@@ -50,6 +126,8 @@
             <button type="button" id="geoStartBtn" aria-label="Utiliser ma position" style="padding:10px 12px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer;">📍</button>
         </div>
         <input id="end" class="vtc-input" placeholder="Adresse d’arrivée">
+
+        <div id="vtc-maps-status" style="font-size:13px;opacity:0.8;margin-top:6px;display:none;"></div>
 
         <div id="stops-container"></div>
 
@@ -70,19 +148,31 @@
     <!-- HEURE -->
     <div class="vtc-section">
         <label class="vtc-label">Heure de prise en charge :</label>
-        <input id="pickupTime" type="time" class="vtc-input">
+        <input id="pickupTime" type="time" step="300" class="vtc-input">
     </div>
 
     <!-- BOUTON CALCUL -->
-    <button type="button" class="vtc-btn" onclick="calculatePrice()">Calculer le prix</button>
+    <button type="button" class="vtc-btn" onclick="calculatePrice()">Calculer les tarifs</button>
+
+    <!-- TARIFS (mode B) -->
+    <div id="vtc-tariffs" class="vtc-section" style="display:none;"></div>
+
+    <!-- OPTIONS -->
+    <div class="vtc-section" id="vtc-options-section">
+        <label id="vtc-options-label" class="vtc-label">Options :</label>
+        <div id="vtc-options"></div>
+
+        <label class="vtc-label">Option personnalisée :</label>
+        <input id="customOption" type="text" placeholder="Ex : plusieurs vans, car, demande spéciale…" class="vtc-input">
+    </div>
 
     <!-- MAP -->
     <div id="map"
          style="width:100%;height:260px;margin-top:20px;border-radius:12px;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
     </div>
 
-    <!-- RÉSUMÉ TRAJET -->
-    <div id="route-summary"
+        <!-- RÉSUMÉ TRAJET -->
+        <div id="vtc-summary"
          style="display:none;margin-top:22px;background:#fafafa;padding:18px;border-radius:12px;border:1px solid #e5e5e5;font-family:'Inter',sans-serif;">
     </div>
 
@@ -100,13 +190,22 @@
         <p id="contact-error" style="color:#c00;font-size:14px;margin-top:6px;"></p>
 
         {% assign privacy_href = shop.policies.privacy_policy.url %}
-        {% if privacy_href == blank %}{% assign privacy_href = '#' %}{% endif %}
         {% assign terms_href = shop.policies.terms_of_service.url %}
-        {% if terms_href == blank %}{% assign terms_href = '#' %}{% endif %}
 
         <label class="vtc-checkbox" style="display:block;margin-top:12px;">
             <input type="checkbox" id="termsConsent" required>
-            J’ai lu et j’accepte les <a href="{{ terms_href }}">Conditions</a> et la <a href="{{ privacy_href }}">Politique de confidentialité</a>.
+                        J’ai lu et j’accepte les
+                        {% if terms_href != blank %}
+                            <a href="{{ terms_href }}" style="text-decoration:underline;color:inherit;">Conditions</a>
+                        {% else %}
+                            <span>Conditions</span>
+                        {% endif %}
+                        et la
+                        {% if privacy_href != blank %}
+                            <a href="{{ privacy_href }}" style="text-decoration:underline;color:inherit;">Politique de confidentialité</a>
+                        {% else %}
+                            <span>Politique de confidentialité</span>
+                        {% endif %}.
         </label>
 
         <label class="vtc-checkbox" style="display:block;margin-top:10px;">
@@ -118,7 +217,7 @@
     </div>
 
     <!-- PRIX + BOUTON RESERVER -->
-    <div id="result-wrapper" style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;">
+    <div id="vtc-reservation" style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;">
         <p id="result" class="vtc-result" style="margin:0;"></p>
 
         <button type="button" id="reserve-btn"
@@ -142,7 +241,7 @@
 
 {% schema %}
 {
-  "name": "VTC Smart Booking",
+    "name": "VTC – Calculateur",
   "target": "section",
   "enabled_on": {
     "templates": ["index", "page", "product"]
@@ -153,18 +252,236 @@
       "id": "google_maps_api_key",
       "label": "Google Maps API Key"
         },
+                {
+                        "type": "text",
+                        "id": "widget_title",
+                        "label": "Titre du widget",
+                        "default": "VTC Smart Booking"
+                },
+            {
+                "type": "select",
+                "id": "display_mode",
+                "label": "Mode d’affichage (véhicules)",
+                "default": "A",
+                "options": [
+                  { "value": "A", "label": "A — Choisir le véhicule avant calcul" },
+                  { "value": "B", "label": "B — Afficher tous les tarifs après calcul" }
+                ]
+            },
+
+                        {
+                                "type": "select",
+                                "id": "options_display_mode",
+                                "label": "Affichage des options",
+                                "default": "before_calc",
+                                "options": [
+                                    { "value": "before_calc", "label": "Avant calcul" },
+                                    { "value": "after_calc", "label": "Après calcul" },
+                                    { "value": "before_booking", "label": "Au moment de réserver" }
+                                ]
+                        },
+
+            {
+                "type": "select",
+                "id": "pricing_behavior",
+                "label": "Comportement pricing global",
+                "default": "normal_prices",
+                "options": [
+                  { "value": "normal_prices", "label": "Normal — Tarifs" },
+                  { "value": "all_quote", "label": "Tout sur devis" },
+                  { "value": "lead_time_pricing", "label": "Immédiat vs Réservation (délai)" }
+                ]
+            },
+
+            {
+                "type": "number",
+                "id": "lead_time_threshold_minutes",
+                "label": "Seuil (minutes) : bascule Immédiat/Réservation",
+                "default": 120
+            },
+            {
+                "type": "text",
+                "id": "immediate_label",
+                "label": "Libellé Immédiat",
+                "default": "Immédiat"
+            },
+            {
+                "type": "text",
+                "id": "reservation_label",
+                "label": "Libellé Réservation",
+                "default": "Réservation"
+            },
+
+            {
+                "type": "checkbox",
+                "id": "immediate_surcharge_enabled",
+                "label": "Majoration Immédiat activée",
+                "default": true
+            },
+            {
+                "type": "number",
+                "id": "immediate_base_delta_amount",
+                "label": "Immédiat — + montant sur la base (€)",
+                "default": 0
+            },
+            {
+                "type": "number",
+                "id": "immediate_base_delta_percent",
+                "label": "Immédiat — + % sur la base",
+                "default": 0
+            },
+            {
+                "type": "number",
+                "id": "immediate_total_delta_percent",
+                "label": "Immédiat — + % sur le total (optionnel)",
+                "default": 0
+            },
         {
             "type": "text",
-            "id": "notify_endpoint_url",
-            "label": "Notify endpoint URL (optionnel)",
-            "info": "Optionnel : laisser vide pour utiliser l’App Proxy (par défaut: /apps/vtc/api/booking-notify). Ne mettez jamais une URL Incoming Webhook Slack (hooks.slack.com) ici : elle serait exposée côté storefront."
+            "id": "stop_fee",
+            "label": "Frais par arrêt",
+            "default": "0",
+            "info": "Frais ajoutés par arrêt (ex: 5). Utilisez un point pour les décimales."
         },
         {
             "type": "text",
-            "id": "slack_endpoint_url",
-            "label": "Endpoint serveur (optionnel)",
-            "info": "Optionnel : laisser vide pour utiliser l’App Proxy (par défaut: /apps/vtc/api/booking-notify). Ne mettez jamais une URL Incoming Webhook Slack (hooks.slack.com) ici : elle serait exposée côté storefront."
+            "id": "quote_message",
+            "label": "Message (Sur devis)",
+            "default": "Sur devis — merci de nous contacter."
         },
+
+                {
+                    "type": "header",
+                    "content": "Véhicules (jusqu’à 6)"
+                },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_1_enabled",
+                    "label": "Véhicule #1 activé",
+                    "default": true
+                },
+                { "type": "text", "id": "vehicle_1_id", "label": "Véhicule #1 — ID", "default": "berline" },
+                { "type": "text", "id": "vehicle_1_label", "label": "Véhicule #1 — Libellé", "default": "Berline" },
+                {
+                    "type": "text",
+                    "id": "vehicle_1_base_fare",
+                    "label": "Véhicule #1 — Base fare",
+                    "default": "29.99",
+                    "info": "Montant minimum (ex: 29.99). Utilisez un point pour les décimales."
+                },
+                {
+                    "type": "text",
+                    "id": "vehicle_1_price_per_km",
+                    "label": "Véhicule #1 — Prix par km",
+                    "default": "2.4",
+                    "info": "Prix au km (ex: 2.4). Utilisez un point pour les décimales."
+                },
+                { "type": "checkbox", "id": "vehicle_1_quote_only", "label": "Véhicule #1 — Sur devis", "default": false },
+                { "type": "image_picker", "id": "vehicle_1_image", "label": "Véhicule #1 — Image" },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_2_enabled",
+                    "label": "Véhicule #2 activé",
+                    "default": true
+                },
+                { "type": "text", "id": "vehicle_2_id", "label": "Véhicule #2 — ID", "default": "van" },
+                { "type": "text", "id": "vehicle_2_label", "label": "Véhicule #2 — Libellé", "default": "Van 7 places" },
+                {
+                    "type": "text",
+                    "id": "vehicle_2_base_fare",
+                    "label": "Véhicule #2 — Base fare",
+                    "default": "29.99",
+                    "info": "Montant minimum (ex: 29.99). Utilisez un point pour les décimales."
+                },
+                {
+                    "type": "text",
+                    "id": "vehicle_2_price_per_km",
+                    "label": "Véhicule #2 — Prix par km",
+                    "default": "3.5",
+                    "info": "Prix au km (ex: 3.5). Utilisez un point pour les décimales."
+                },
+                { "type": "checkbox", "id": "vehicle_2_quote_only", "label": "Véhicule #2 — Sur devis", "default": false },
+                { "type": "image_picker", "id": "vehicle_2_image", "label": "Véhicule #2 — Image" },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_3_enabled",
+                    "label": "Véhicule #3 activé",
+                    "default": true
+                },
+                { "type": "text", "id": "vehicle_3_id", "label": "Véhicule #3 — ID", "default": "autre" },
+                { "type": "text", "id": "vehicle_3_label", "label": "Véhicule #3 — Libellé", "default": "Autre (sur devis)" },
+                { "type": "text", "id": "vehicle_3_base_fare", "label": "Véhicule #3 — Base fare", "default": "0" },
+                { "type": "text", "id": "vehicle_3_price_per_km", "label": "Véhicule #3 — Prix par km", "default": "0" },
+                { "type": "checkbox", "id": "vehicle_3_quote_only", "label": "Véhicule #3 — Sur devis", "default": true },
+                { "type": "image_picker", "id": "vehicle_3_image", "label": "Véhicule #3 — Image" },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_4_enabled",
+                    "label": "Véhicule #4 activé",
+                    "default": false
+                },
+                { "type": "text", "id": "vehicle_4_id", "label": "Véhicule #4 — ID", "default": "vehicle_4" },
+                { "type": "text", "id": "vehicle_4_label", "label": "Véhicule #4 — Libellé", "default": "Véhicule 4" },
+                { "type": "text", "id": "vehicle_4_base_fare", "label": "Véhicule #4 — Base fare", "default": "0" },
+                { "type": "text", "id": "vehicle_4_price_per_km", "label": "Véhicule #4 — Prix par km", "default": "0" },
+                { "type": "checkbox", "id": "vehicle_4_quote_only", "label": "Véhicule #4 — Sur devis", "default": false },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_5_enabled",
+                    "label": "Véhicule #5 activé",
+                    "default": false
+                },
+                { "type": "text", "id": "vehicle_5_id", "label": "Véhicule #5 — ID", "default": "vehicle_5" },
+                { "type": "text", "id": "vehicle_5_label", "label": "Véhicule #5 — Libellé", "default": "Véhicule 5" },
+                { "type": "text", "id": "vehicle_5_base_fare", "label": "Véhicule #5 — Base fare", "default": "0" },
+                { "type": "text", "id": "vehicle_5_price_per_km", "label": "Véhicule #5 — Prix par km", "default": "0" },
+                { "type": "checkbox", "id": "vehicle_5_quote_only", "label": "Véhicule #5 — Sur devis", "default": false },
+
+                {
+                    "type": "checkbox",
+                    "id": "vehicle_6_enabled",
+                    "label": "Véhicule #6 activé",
+                    "default": false
+                },
+                { "type": "text", "id": "vehicle_6_id", "label": "Véhicule #6 — ID", "default": "vehicle_6" },
+                { "type": "text", "id": "vehicle_6_label", "label": "Véhicule #6 — Libellé", "default": "Véhicule 6" },
+                { "type": "text", "id": "vehicle_6_base_fare", "label": "Véhicule #6 — Base fare", "default": "0" },
+                { "type": "text", "id": "vehicle_6_price_per_km", "label": "Véhicule #6 — Prix par km", "default": "0" },
+                { "type": "checkbox", "id": "vehicle_6_quote_only", "label": "Véhicule #6 — Sur devis", "default": false },
+
+                {
+                    "type": "header",
+                    "content": "Options (jusqu’à 6)"
+                },
+
+                { "type": "checkbox", "id": "option_1_enabled", "label": "Option #1 activée", "default": false },
+                { "type": "text", "id": "option_1_label", "label": "Option #1 — Libellé", "default": "Option 1" },
+                { "type": "number", "id": "option_1_price", "label": "Option #1 — Prix (€)", "default": 0 },
+
+                { "type": "checkbox", "id": "option_2_enabled", "label": "Option #2 activée", "default": false },
+                { "type": "text", "id": "option_2_label", "label": "Option #2 — Libellé", "default": "Option 2" },
+                { "type": "number", "id": "option_2_price", "label": "Option #2 — Prix (€)", "default": 0 },
+
+                { "type": "checkbox", "id": "option_3_enabled", "label": "Option #3 activée", "default": false },
+                { "type": "text", "id": "option_3_label", "label": "Option #3 — Libellé", "default": "Option 3" },
+                { "type": "number", "id": "option_3_price", "label": "Option #3 — Prix (€)", "default": 0 },
+
+                { "type": "checkbox", "id": "option_4_enabled", "label": "Option #4 activée", "default": false },
+                { "type": "text", "id": "option_4_label", "label": "Option #4 — Libellé", "default": "Option 4" },
+                { "type": "number", "id": "option_4_price", "label": "Option #4 — Prix (€)", "default": 0 },
+
+                { "type": "checkbox", "id": "option_5_enabled", "label": "Option #5 activée", "default": false },
+                { "type": "text", "id": "option_5_label", "label": "Option #5 — Libellé", "default": "Option 5" },
+                { "type": "number", "id": "option_5_price", "label": "Option #5 — Prix (€)", "default": 0 },
+
+                { "type": "checkbox", "id": "option_6_enabled", "label": "Option #6 activée", "default": false },
+                { "type": "text", "id": "option_6_label", "label": "Option #6 — Libellé", "default": "Option 6" },
+                { "type": "number", "id": "option_6_price", "label": "Option #6 — Prix (€)", "default": 0 },
         {
             "type": "text",
             "id": "booking_email_to",
@@ -172,27 +489,29 @@
             "info": "Optionnel (non secret) : destinataire de l'email de réservation. Si vide, l'app utilise BOOKING_EMAIL_TO (env)."
         },
         {
-            "type": "image_picker",
-            "id": "berline_image",
-            "label": "Image véhicule (Berline)"
+            "type": "checkbox",
+            "id": "slack_enabled",
+            "label": "Slack activé",
+            "default": true
         },
         {
-            "type": "image_picker",
-            "id": "van_image",
-            "label": "Image véhicule (Van)"
-        },
-        {
-            "type": "image_picker",
-            "id": "autre_image",
-            "label": "Image véhicule (Autre)"
-    }
+                        "type": "select",
+                        "id": "slack_destination",
+                        "label": "Destination Slack (optionnel)",
+                        "info": "Destination non sensible. Le webhook est configuré dans l’admin de l’app.",
+                        "default": "devis",
+                        "options": [
+                            { "value": "devis", "label": "devis" },
+                            { "value": "reservations", "label": "reservations" },
+                            { "value": "support", "label": "support" }
+                        ]
+        }
   ]
 }
 {% endschema %}
 
 <script src="{{ 'vtc-booking.js' | asset_url }}" defer></script>
 
-<script src="https://maps.googleapis.com/maps/api/js?key={{ block.settings.google_maps_api_key }}&libraries=places&callback=initAutocomplete" defer></script>
 
 <style>
     .vtc-widget {
