@@ -140,7 +140,15 @@ function ensureGoogleMapsLoaded(reason) {
         const interval = setInterval(() => {
           if (isGoogleReady()) {
             clearInterval(interval);
-            setMapsStatus("");
+            // If Places is blocked, keep a helpful message but allow routing.
+            if (isPlacesReady()) {
+              setMapsStatus("");
+            } else {
+              const host = window.location.host;
+              setMapsStatus(
+                `Google Maps est chargé mais l’autocomplete est indisponible (Places API). Activez "Places API" puis autorisez: https://${host}/*`,
+              );
+            }
             resolve(true);
             return;
           }
@@ -186,14 +194,21 @@ function ensureGoogleMapsLoaded(reason) {
         clearTimeout(timeout);
         const ok = isGoogleReady();
         if (!ok) {
+          setMapsStatus("");
+          resolve(false);
+          return;
+        }
+
+        if (isPlacesReady()) {
+          setMapsStatus("");
+        } else {
           const host = window.location.host;
           setMapsStatus(
-            `Google Maps s’est chargé mais Places API n’est pas disponible. Activez "Places API" dans Google Cloud + facturation, puis autorisez: https://${host}/*`,
+            `Google Maps est chargé mais l’autocomplete est indisponible (Places API). Activez "Places API" puis autorisez: https://${host}/*`,
           );
-        } else {
-          setMapsStatus("");
         }
-        resolve(ok);
+
+        resolve(true);
       };
       script.onerror = () => {
         clearTimeout(timeout);
@@ -1436,6 +1451,10 @@ function renderTariffsAfterCalculation(km, stopsCount, pickupTime, pickupDate, k
    UTILITAIRE : Google prêt ?
 --------------------------- */
 function isGoogleReady() {
+  return !!(window.google && google.maps);
+}
+
+function isPlacesReady() {
   return !!(window.google && google.maps && google.maps.places);
 }
 
@@ -1475,7 +1494,7 @@ function getAutocompleteOptions() {
 }
 
 function rebindAutocompletes() {
-  if (!isGoogleReady()) return;
+  if (!isPlacesReady()) return;
 
   const options = getAutocompleteOptions();
 
@@ -1508,7 +1527,7 @@ function rebindAutocompletes() {
    AUTOCOMPLETE DÉPART / ARRIVÉE
 --------------------------- */
 function ensureBaseAutocompletes() {
-  if (!isGoogleReady()) return;
+  if (!isPlacesReady()) return;
 
   const startInput = document.getElementById("start");
   const endInput = document.getElementById("end");
@@ -1565,7 +1584,7 @@ function addStopField() {
 
   container.appendChild(input);
 
-  if (isGoogleReady()) {
+  if (isPlacesReady()) {
     const ac = new google.maps.places.Autocomplete(input, getAutocompleteOptions());
     input._gmAutocomplete = ac;
     stopAutocompletes.push(ac);
@@ -1573,7 +1592,7 @@ function addStopField() {
     input.addEventListener("focus", () => {
       if (input._gmAutocomplete) return;
       ensureGoogleMapsLoaded("stop-focus").then((ok) => {
-        if (!ok || !isGoogleReady() || input._gmAutocomplete) return;
+        if (!ok || !isPlacesReady() || input._gmAutocomplete) return;
         const ac = new google.maps.places.Autocomplete(input, getAutocompleteOptions());
         input._gmAutocomplete = ac;
         stopAutocompletes.push(ac);
