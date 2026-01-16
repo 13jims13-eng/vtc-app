@@ -110,7 +110,7 @@ For more information on the Shopify Dev MCP please read [the  documentation](htt
 
 Ce projet est prêt à être déployé sur Render avec une URL stable.
 
-- Blueprint: utilisez [render.yaml](../render.yaml) (le service pointe sur le sous-dossier `vtc-calculateur-de-trajets`).
+- Blueprint: utilisez [render.yaml](../render.yaml) (le service pointe sur le sous-dossier `vtc-app`).
 - Build command: `npm ci && npm run build`
 - Start command: `npm run docker-start` (exécute `prisma generate` + `prisma migrate deploy` puis démarre le serveur)
 - Port: le serveur écoute sur `process.env.PORT` (fallback 3000 géré par `react-router-serve`).

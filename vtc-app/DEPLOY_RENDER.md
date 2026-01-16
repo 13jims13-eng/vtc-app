@@ -1,6 +1,6 @@
 # Déploiement Render (production)
 
-URL prod (Render): `https://vtc-app-calculator.onrender.com`
+URL prod (Render): `https://vtc-calculateur-de-trajets.onrender.com`
 
 Objectif: rendre l'App Proxy Shopify fonctionnel pour que le thème puisse appeler:
 
@@ -15,7 +15,7 @@ Configurer ces variables (sans jamais commiter de secrets).
 ### Requis
 
 - `NODE_ENV=production`
-- `APP_URL=https://vtc-app-calculator.onrender.com`
+- `APP_URL=https://vtc-calculateur-de-trajets.onrender.com`
 - `SHOPIFY_API_KEY`
 - `SHOPIFY_API_SECRET`
 - `SCOPES`
@@ -50,6 +50,12 @@ Configurer ces variables (sans jamais commiter de secrets).
 - (fallback DEV uniquement) `ALLOW_DEFAULT_SLACK_FALLBACK=true` + `DEFAULT_SLACK_WEBHOOK_URL`
 - (compat legacy) `SLACK_WEBHOOK_URL`
 
+### Assistant IA (optionnel)
+
+- `AI_ASSISTANT_ENABLED=true|false` (désactive l’endpoint si false)
+- `OPENAI_API_KEY` (serveur uniquement)
+- (optionnel) `OPENAI_MODEL` (par défaut: `gpt-4o-mini`)
+
 Vérification locale (sans afficher les secrets):
 
 ```bash
@@ -72,17 +78,17 @@ Si `application_url` ou les `redirect_urls` pointent sur `https://example.com`, 
 Mettre à jour le fichier `shopify.app.toml` avant déploiement Shopify:
 
 ```bash
-APP_URL=https://vtc-app-calculator.onrender.com npm run sync:shopify-url
+APP_URL=https://vtc-calculateur-de-trajets.onrender.com npm run sync:shopify-url
 shopify app deploy
 ```
 
 Valeurs attendues:
 
-- `application_url = "https://vtc-app-calculator.onrender.com"`
+- `application_url = "https://vtc-calculateur-de-trajets.onrender.com"`
 - `redirect_urls = [`
-  - `"https://vtc-app-calculator.onrender.com/auth/callback"`
-  - `"https://vtc-app-calculator.onrender.com/auth/shopify/callback"`
-  - `"https://vtc-app-calculator.onrender.com/api/auth/callback"`
+  - `"https://vtc-calculateur-de-trajets.onrender.com/auth/callback"`
+  - `"https://vtc-calculateur-de-trajets.onrender.com/auth/shopify/callback"`
+  - `"https://vtc-calculateur-de-trajets.onrender.com/api/auth/callback"`
   `]`
 - `[app_proxy] url = "/apps/vtc"` (Shopify proxy vers `application_url` + ce chemin)
 
@@ -126,7 +132,7 @@ Les routes App Proxy valident la signature Shopify via HMAC avant traitement.
 
 1) Vérifier healthcheck:
 
-- `GET https://vtc-app-calculator.onrender.com/healthz` doit répondre `200 { ok: true, ... }`
+- `GET https://vtc-calculateur-de-trajets.onrender.com/healthz` doit répondre `200 { ok: true, ... }`
 
 2) Vérifier App Proxy (healthcheck):
 

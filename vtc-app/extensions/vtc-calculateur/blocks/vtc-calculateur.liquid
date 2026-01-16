@@ -22,10 +22,13 @@
 
 {% assign options_display_mode = block.settings.options_display_mode | default: 'before_calc' | strip %}
 
+{% assign design_style = block.settings.design_style | default: 'blue' | strip %}
+{% if design_style == blank %}{% assign design_style = 'blue' %}{% endif %}
+
 {% capture options_config_json %}
     [
     {% assign first_opt = true %}
-    {% for i in (1..6) %}
+    {% for i in (1..5) %}
         {% assign enabled_id = 'option_' | append: i | append: '_enabled' %}
         {% if block.settings[enabled_id] %}
             {% assign label_id = 'option_' | append: i | append: '_label' %}
@@ -98,9 +101,11 @@
   }
 {% endcapture %}
 
+{{ 'vtc-booking-premium.css' | asset_url | stylesheet_tag }}
+
 <div
     id="vtc-widget"
-    class="vtc-widget"
+    class="vtc-widget vtc-widget--premium vtc-theme--{{ design_style }}"
     data-booking-email-to="{% if vtc_booking_email_to != blank %}{{ vtc_booking_email_to }}{% endif %}"
     data-google-maps-api-key="{{ block.settings.google_maps_api_key | escape }}"
     data-stop-fee="{{ block.settings.stop_fee }}"
@@ -262,6 +267,20 @@
                         "id": "widget_title",
                         "label": "Titre du widget",
                         "default": "VTC Smart Booking"
+                },
+                {
+                    "type": "header",
+                    "content": "Design"
+                },
+                {
+                    "type": "select",
+                    "id": "design_style",
+                    "label": "Design du widget",
+                    "default": "blue",
+                    "options": [
+                        { "value": "blue", "label": "Bleu (premium)" },
+                        { "value": "black_gold", "label": "Noir / Doré" }
+                    ]
                 },
             {
                 "type": "select",
@@ -461,7 +480,7 @@
 
                 {
                     "type": "header",
-                    "content": "Options (jusqu’à 6)"
+                    "content": "Options (jusqu’à 5)"
                 },
 
                 { "type": "checkbox", "id": "option_1_enabled", "label": "Option #1 activée", "default": false },
@@ -484,9 +503,6 @@
                 { "type": "text", "id": "option_5_label", "label": "Option #5 — Libellé", "default": "Option 5" },
                 { "type": "number", "id": "option_5_price", "label": "Option #5 — Prix (€)", "default": 0 },
 
-                { "type": "checkbox", "id": "option_6_enabled", "label": "Option #6 activée", "default": false },
-                { "type": "text", "id": "option_6_label", "label": "Option #6 — Libellé", "default": "Option 6" },
-                { "type": "number", "id": "option_6_price", "label": "Option #6 — Prix (€)", "default": 0 },
         {
             "type": "text",
             "id": "booking_email_to",
@@ -519,7 +535,7 @@
 
 
 <style>
-    .vtc-widget {
+    .vtc-widget:not(.vtc-widget--premium) {
         max-width: 650px;
         background: #ffffff;
         padding: 26px;
@@ -528,10 +544,10 @@
         margin: auto;
         font-family: 'Inter', sans-serif;
     }
-    .vtc-label { font-weight:600; margin-bottom:6px; display:block; }
-    .vtc-section { margin-bottom:22px; }
-    .vtc-input { width:100%;padding:14px;margin:8px 0;border-radius:8px;border:1px solid #ccc;font-size:15px; }
-    .vtc-btn {
+    .vtc-widget:not(.vtc-widget--premium) .vtc-label { font-weight:600; margin-bottom:6px; display:block; }
+    .vtc-widget:not(.vtc-widget--premium) .vtc-section { margin-bottom:22px; }
+    .vtc-widget:not(.vtc-widget--premium) .vtc-input { width:100%;padding:14px;margin:8px 0;border-radius:8px;border:1px solid #ccc;font-size:15px; }
+    .vtc-widget:not(.vtc-widget--premium) .vtc-btn {
         width:100%;
         padding:16px;
         font-size:18px;
@@ -543,8 +559,8 @@
         cursor:pointer;
         transition:0.3s;
     }
-    .vtc-btn:hover { background:#333; }
-    .vtc-add-stop {
+    .vtc-widget:not(.vtc-widget--premium) .vtc-btn:hover { background:#333; }
+    .vtc-widget:not(.vtc-widget--premium) .vtc-add-stop {
         margin-top:10px;
         background:transparent;
         border:none;

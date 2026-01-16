@@ -1,0 +1,418 @@
+/* Premium skin for the VTC widget.
+   Scoped to .vtc-widget--premium to avoid impacting other content.
+*/
+
+#vtc-widget.vtc-widget--premium {
+  --vtc-bg: #0b0f19;
+  --vtc-surface: #0f172a;
+  --vtc-card: rgba(255, 255, 255, 0.06);
+  --vtc-card-2: rgba(255, 255, 255, 0.085);
+  --vtc-border: rgba(255, 255, 255, 0.12);
+  --vtc-text: rgba(255, 255, 255, 0.92);
+  --vtc-muted: rgba(255, 255, 255, 0.72);
+  --vtc-subtle: rgba(255, 255, 255, 0.55);
+  --vtc-accent: #7c3aed;
+  --vtc-accent-2: #22d3ee;
+  --vtc-danger: #ef4444;
+  --vtc-radius: 16px;
+  --vtc-radius-sm: 12px;
+  --vtc-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+
+  color: var(--vtc-text) !important;
+  background: radial-gradient(1200px 600px at 15% 0%, color-mix(in srgb, var(--vtc-accent) 38%, transparent), transparent 55%),
+    radial-gradient(900px 500px at 85% 15%, color-mix(in srgb, var(--vtc-accent-2) 28%, transparent), transparent 60%),
+    linear-gradient(180deg, var(--vtc-bg), #060815 72%) !important;
+  border: 1px solid var(--vtc-border) !important;
+  border-radius: 22px !important;
+  padding: 18px !important;
+  box-shadow: var(--vtc-shadow) !important;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji" !important;
+}
+
+#vtc-widget.vtc-widget--premium.vtc-theme--blue {
+  --vtc-accent: #7c3aed;
+  --vtc-accent-2: #22d3ee;
+  --vtc-reserve-border: #22d3ee;
+}
+
+#vtc-widget.vtc-widget--premium.vtc-theme--black_gold {
+  --vtc-bg: #07060b;
+  --vtc-surface: #0b0a10;
+  --vtc-card: rgba(255, 255, 255, 0.05);
+  --vtc-card-2: rgba(255, 255, 255, 0.075);
+  --vtc-border: rgba(212, 175, 55, 0.22);
+  --vtc-text: rgba(255, 255, 255, 0.93);
+  --vtc-muted: rgba(255, 255, 255, 0.74);
+  --vtc-subtle: rgba(255, 255, 255, 0.56);
+  --vtc-accent: #d4af37;
+  --vtc-accent-2: #f59e0b;
+  --vtc-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+  --vtc-reserve-border: #d4af37;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-subtitle {
+  margin: 8px 0 18px 0;
+  color: var(--vtc-muted);
+  font-size: 14px;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-section {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: var(--vtc-radius);
+  background: linear-gradient(180deg, var(--vtc-card), rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--vtc-border);
+}
+
+#vtc-widget.vtc-widget--premium .vtc-label {
+  display: block;
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  color: var(--vtc-muted);
+}
+
+#vtc-widget.vtc-widget--premium .vtc-input {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--vtc-text);
+  padding: 12px 12px;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-input::placeholder {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+#vtc-widget.vtc-widget--premium .vtc-input:focus {
+  border-color: color-mix(in srgb, var(--vtc-accent) 70%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--vtc-accent) 18%, transparent);
+  background: rgba(255, 255, 255, 0.075);
+}
+
+#vtc-widget.vtc-widget--premium #vtc-maps-status {
+  color: var(--vtc-muted);
+}
+
+#vtc-widget.vtc-widget--premium .vtc-btn,
+#vtc-widget.vtc-widget--premium #reserve-btn,
+#vtc-widget.vtc-widget--premium .vtc-add-stop,
+#vtc-widget.vtc-widget--premium button[data-vehicle-id] {
+  appearance: none;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(135deg, var(--vtc-accent), var(--vtc-accent-2));
+  color: #0b0f19;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: transform 120ms ease, filter 120ms ease, opacity 120ms ease;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-btn:hover,
+#vtc-widget.vtc-widget--premium #reserve-btn:hover,
+#vtc-widget.vtc-widget--premium .vtc-add-stop:hover,
+#vtc-widget.vtc-widget--premium button[data-vehicle-id]:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+
+#vtc-widget.vtc-widget--premium .vtc-btn:active,
+#vtc-widget.vtc-widget--premium #reserve-btn:active,
+#vtc-widget.vtc-widget--premium .vtc-add-stop:active,
+#vtc-widget.vtc-widget--premium button[data-vehicle-id]:active {
+  transform: translateY(0);
+}
+
+#vtc-widget.vtc-widget--premium #reserve-btn[disabled] {
+  background: rgba(255, 255, 255, 0.10);
+  color: rgba(255, 255, 255, 0.55);
+  border-color: rgba(255, 255, 255, 0.14);
+  cursor: not-allowed;
+}
+
+#vtc-widget.vtc-widget--premium #geoStartBtn {
+  border-radius: 12px !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: var(--vtc-text) !important;
+}
+
+#vtc-widget.vtc-widget--premium #geoStartBtn:hover {
+  background: rgba(255, 255, 255, 0.085) !important;
+}
+
+/* Vehicle choices (mode A) */
+#vtc-widget.vtc-widget--premium .vtc-radio-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 560px) {
+  #vtc-widget.vtc-widget--premium .vtc-radio-group {
+    grid-template-columns: 1fr;
+  }
+}
+
+#vtc-widget.vtc-widget--premium .vtc-choice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 140ms ease, background 140ms ease, transform 120ms ease;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-choice:hover {
+  background: rgba(255, 255, 255, 0.065);
+  transform: translateY(-1px);
+}
+
+#vtc-widget.vtc-widget--premium .vtc-choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-choice .vtc-choice-image {
+  width: 64px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-choice-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-choice .vtc-choice-title {
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-choice .vtc-choice-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--vtc-subtle);
+  line-height: 1.3;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-choice.is-selected {
+  border-color: color-mix(in srgb, var(--vtc-accent-2) 82%, transparent);
+  background: color-mix(in srgb, var(--vtc-accent-2) 12%, transparent);
+}
+
+/* CSS :has fallback for modern browsers */
+@supports selector(label:has(input:checked)) {
+  #vtc-widget.vtc-widget--premium .vtc-choice:has(input:checked) {
+    border-color: color-mix(in srgb, var(--vtc-accent-2) 82%, transparent);
+    background: color-mix(in srgb, var(--vtc-accent-2) 12%, transparent);
+  }
+}
+
+/* Options */
+#vtc-widget.vtc-widget--premium #vtc-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 560px) {
+  #vtc-widget.vtc-widget--premium #vtc-options {
+    grid-template-columns: 1fr;
+  }
+}
+
+#vtc-widget.vtc-widget--premium .vtc-checkbox {
+  margin: 0;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-checkbox input[type="checkbox"] {
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--vtc-accent);
+}
+
+/* Tariffs (mode B) */
+#vtc-widget.vtc-widget--premium #vtc-tariffs h3 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  color: var(--vtc-text);
+}
+
+#vtc-widget.vtc-widget--premium .vtc-tariffs-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 740px) {
+  #vtc-widget.vtc-widget--premium .vtc-tariffs-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+#vtc-widget.vtc-widget--premium .vtc-tariff-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 18px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.045);
+  transition: transform 120ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-tariff-card:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.065);
+}
+
+#vtc-widget.vtc-widget--premium .vtc-tariff-card.is-selected {
+  border-color: color-mix(in srgb, var(--vtc-accent-2) 86%, transparent);
+  background: color-mix(in srgb, var(--vtc-accent-2) 13%, transparent);
+}
+
+#vtc-widget.vtc-widget--premium .vtc-tariff-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-tariff-image {
+  width: 168px;
+  height: 104px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 740px) {
+  #vtc-widget.vtc-widget--premium .vtc-tariff-image {
+    width: 108px;
+    height: 74px;
+    border-radius: 14px;
+  }
+}
+
+#vtc-widget.vtc-widget--premium .vtc-tariff-title {
+  font-weight: 850;
+  margin: 0;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-tariff-price {
+  font-size: 13px;
+  color: var(--vtc-muted);
+  margin-top: 3px;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-tariff-price strong {
+  color: var(--vtc-text);
+}
+
+#vtc-widget.vtc-widget--premium .vtc-tariff-select {
+  padding: 10px 12px;
+  border-radius: 14px;
+  min-width: 112px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+/* Summary + reservation row */
+#vtc-widget.vtc-widget--premium #map {
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35) !important;
+}
+
+#vtc-widget.vtc-widget--premium #vtc-summary {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: var(--vtc-text) !important;
+}
+
+#vtc-widget.vtc-widget--premium #vtc-reservation {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  padding-bottom: 92px;
+}
+
+#vtc-widget.vtc-widget--premium #result {
+  margin: 0;
+}
+
+#vtc-widget.vtc-widget--premium #reserve-btn {
+  width: min(420px, 100%);
+  transform-origin: center;
+  background: rgba(0, 0, 0, 0.38) !important;
+  color: #ffffff !important;
+  border: 2px solid color-mix(in srgb, var(--vtc-reserve-border) 92%, transparent) !important;
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.38),
+    0 0 0 4px color-mix(in srgb, var(--vtc-reserve-border) 18%, transparent) !important;
+}
+
+@keyframes vtc-reserve-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.045); }
+}
+
+#vtc-widget.vtc-widget--premium #reserve-btn:not([disabled]) {
+  animation: vtc-reserve-pulse 1.8s ease-in-out infinite;
+}
+
+#vtc-widget.vtc-widget--premium #reserve-btn:hover:not([disabled]) {
+  animation-play-state: paused;
+  transform: scale(1.03);
+  border-color: color-mix(in srgb, var(--vtc-reserve-border) 100%, transparent) !important;
+  box-shadow:
+    0 14px 34px rgba(0, 0, 0, 0.42),
+    0 0 0 5px color-mix(in srgb, var(--vtc-reserve-border) 22%, transparent) !important;
+}
+
+#vtc-widget.vtc-widget--premium #reserve-btn[disabled] {
+  border: 2px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: none !important;
+}
+
+#vtc-widget.vtc-widget--premium .vtc-result {
+  font-size: 14px;
+  color: var(--vtc-muted);
+}
+
+#vtc-widget.vtc-widget--premium #contact-error,
+#vtc-widget.vtc-widget--premium #consent-error {
+  color: var(--vtc-danger) !important;
+}

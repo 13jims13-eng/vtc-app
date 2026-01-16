@@ -7,6 +7,7 @@ name = "VTC – Calculateur de trajets"
 application_url = "https://vtc-calculateur-de-trajets.onrender.com"
 embedded = true
 
+
 [build]
 automatically_update_urls_on_dev = true
 

@@ -270,28 +270,89 @@ export function buildBookingSummary(body: BookingNotifyRequestBody): BookingSumm
         .join("")}</ul>`
     : `<p>animal=${petOption ? "oui" : "non"}, siège bébé=${babySeatOption ? "oui" : "non"}</p>`;
 
+  const routeText = `${start || "(non précisé)"} → ${end || "(non précisé)"}`;
+
   const html = `
-    <h2>Nouvelle réservation VTC</h2>
-    <h3>Trajet</h3>
-    <p><b>Départ:</b> ${escapeHtml(start || "(non précisé)")}</p>
-    <p><b>Arrivée:</b> ${escapeHtml(end || "(non précisé)")}</p>
-    <p><b>Arrêts:</b></p>
-    ${htmlStops}
-    <p><b>Date/Heure:</b> ${escapeHtml(dateTimeText || "(non précisé)")}</p>
-    ${pricingModeText ? `<p><b>Type:</b> ${escapeHtml(pricingModeText)}${typeof leadTimeThresholdMinutes === "number" ? ` (seuil ${escapeHtml(String(leadTimeThresholdMinutes))} min)` : ""}</p>` : ""}
-    ${surchargesText ? `<p><b>Majorations:</b> ${escapeHtml(surchargesText)}</p>` : ""}
-    <p><b>Véhicule:</b> ${escapeHtml(vehicleText || "(non précisé)")}</p>
-    <p><b>Options:</b></p>
-    ${htmlOptions}
-    ${customOption ? `<p><b>Option personnalisée:</b> ${escapeHtml(customOption)}</p>` : ""}
-    <p><b>Distance/Durée:</b> ${escapeHtml(distanceText)} / ${escapeHtml(durationText)}</p>
-    <p><b>Tarif:</b> ${escapeHtml(priceText)}</p>
-    <h3>Client</h3>
-    <p><b>Nom:</b> ${escapeHtml(name || "(non précisé)")}</p>
-    <p><b>Email:</b> ${escapeHtml(email || "(non précisé)")}</p>
-    <p><b>Téléphone:</b> ${escapeHtml(phone || "(non précisé)")}</p>
-    <h3>Consentements</h3>
-    <p>CGU/Privacy=${termsConsent ? "oui" : "non"}, Marketing=${marketingConsent ? "oui" : "non"}</p>
+    <div style="margin:0;padding:0;background:#f6f7fb;">
+      <div style="max-width:760px;margin:0 auto;padding:18px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;">
+        <div style="background:#ffffff;border:1px solid #e7e8ee;border-radius:16px;overflow:hidden;">
+          <div style="padding:16px 18px;background:linear-gradient(135deg,#0b1226,#0f172a);color:#ffffff;">
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+              <tr>
+                <td style="vertical-align:top;">
+                  <div style="font-size:18px;font-weight:800;letter-spacing:-0.01em;">Nouvelle réservation VTC</div>
+                  <div style="margin-top:6px;font-size:13px;opacity:0.9;">${escapeHtml(routeText)}</div>
+                </td>
+                <td style="vertical-align:top;text-align:right;white-space:nowrap;">
+                  <div style="display:inline-block;background:#ffffff;color:#0f172a;border-radius:999px;padding:8px 10px;font-weight:800;font-size:13px;">💶 ${escapeHtml(priceText)}</div>
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="padding:16px 18px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+              <tr>
+                <td style="vertical-align:top;padding-right:10px;width:58%;">
+                  <div style="font-size:14px;font-weight:800;margin:0 0 10px 0;">🚗 Trajet</div>
+
+                  <div style="margin:0 0 8px 0;font-size:13px;">
+                    <b>📍 Départ:</b> ${escapeHtml(start || "(non précisé)")}
+                  </div>
+                  <div style="margin:0 0 8px 0;font-size:13px;">
+                    <b>🏁 Arrivée:</b> ${escapeHtml(end || "(non précisé)")}
+                  </div>
+
+                  <div style="margin:0 0 8px 0;font-size:13px;">
+                    <b>🗓️ Date/Heure:</b> ${escapeHtml(dateTimeText || "(non précisé)")}
+                  </div>
+
+                  <div style="margin:0 0 8px 0;font-size:13px;">
+                    <b>🚘 Véhicule:</b> ${escapeHtml(vehicleText || "(non précisé)")}
+                  </div>
+
+                  ${pricingModeText ? `<div style="margin:0 0 8px 0;font-size:13px;"><b>⏱️ Type:</b> ${escapeHtml(pricingModeText)}${typeof leadTimeThresholdMinutes === "number" ? ` (seuil ${escapeHtml(String(leadTimeThresholdMinutes))} min)` : ""}</div>` : ""}
+                  ${surchargesText ? `<div style="margin:0 0 8px 0;font-size:13px;"><b>➕ Majorations:</b> ${escapeHtml(surchargesText)}</div>` : ""}
+
+                  <div style="margin:0 0 8px 0;font-size:13px;">
+                    <b>📏 Distance/Durée:</b> ${escapeHtml(distanceText)} / ${escapeHtml(durationText)}
+                  </div>
+
+                  <div style="margin:12px 0 6px 0;font-size:13px;font-weight:800;">🧭 Arrêts</div>
+                  <div style="margin:0;font-size:13px;color:#0f172a;">${htmlStops}</div>
+
+                  <div style="margin:12px 0 6px 0;font-size:13px;font-weight:800;">✅ Options</div>
+                  <div style="margin:0;font-size:13px;color:#0f172a;">${htmlOptions}</div>
+
+                  ${customOption ? `<div style="margin:10px 0 0 0;font-size:13px;"><b>📝 Option personnalisée:</b> ${escapeHtml(customOption)}</div>` : ""}
+                </td>
+
+                <td style="vertical-align:top;padding-left:10px;width:42%;">
+                  <div style="font-size:14px;font-weight:800;margin:0 0 10px 0;">👤 Client</div>
+                  <div style="margin:0 0 8px 0;font-size:13px;"><b>Nom:</b> ${escapeHtml(name || "(non précisé)")}</div>
+                  <div style="margin:0 0 8px 0;font-size:13px;">
+                    <b>📧 Email:</b> ${email ? `<a href="mailto:${escapeHtml(email)}" style="color:#2563eb;text-decoration:none;">${escapeHtml(email)}</a>` : escapeHtml("(non précisé)")}
+                  </div>
+                  <div style="margin:0 0 8px 0;font-size:13px;">
+                    <b>📞 Téléphone:</b> ${phone ? `<a href="tel:${escapeHtml(phone)}" style="color:#2563eb;text-decoration:none;">${escapeHtml(phone)}</a>` : escapeHtml("(non précisé)")}
+                  </div>
+
+                  <div style="margin-top:14px;padding:12px;border-radius:14px;border:1px solid #e7e8ee;background:#fafafa;">
+                    <div style="font-weight:800;font-size:13px;margin:0 0 8px 0;">🔒 Consentements</div>
+                    <div style="font-size:13px;">CGU/Privacy: <b>${termsConsent ? "oui" : "non"}</b></div>
+                    <div style="font-size:13px;">Marketing: <b>${marketingConsent ? "oui" : "non"}</b></div>
+                  </div>
+
+                  <div style="margin-top:14px;font-size:12px;color:#64748b;line-height:1.4;">
+                    Répondre à cet email répondra au client (Reply-To).
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
   `.trim();
 
   return {

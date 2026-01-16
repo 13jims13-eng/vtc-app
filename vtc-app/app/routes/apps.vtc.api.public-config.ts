@@ -37,41 +37,37 @@ export const loader = async (args: LoaderFunctionArgs) => {
     requestId,
   });
 
+  // NOTE: This endpoint only returns a Google Maps API key (which is used client-side anyway).
+  // We try to validate App Proxy auth, but we do NOT hard-fail if auth is misconfigured.
+  // This avoids breaking the widget on storefront pages when the app proxy is temporarily unhealthy.
+  let authOk = false;
+  let authError: string | null = null;
   try {
     await authenticate.public.appProxy(args.request);
+    authOk = true;
   } catch (err) {
     if (err instanceof Response) {
-      return jsonResponse(
-        {
-          ok: false,
-          error: "Accès refusé (App Proxy)",
-          reason: "APP_PROXY_AUTH_RESPONSE",
-          requestId,
-        },
-        { status: err.status || 401 },
-      );
+      authError = `APP_PROXY_AUTH_RESPONSE_${err.status}`;
+    } else {
+      authError = "APP_PROXY_AUTH_FAILED";
+      const stack = err instanceof Error ? err.stack : String(err);
+      console.error("public-config auth error", stack);
     }
-
-    const stack = err instanceof Error ? err.stack : String(err);
-    console.error("public-config auth error", stack);
-
-    return jsonResponse(
-      {
-        ok: false,
-        error: "Accès refusé (App Proxy)",
-        reason: "APP_PROXY_AUTH_FAILED",
-        requestId,
-      },
-      { status: 401 },
-    );
   }
 
   const googleMapsApiKey = getGoogleMapsApiKeyFromEnv();
 
-  return jsonResponse({
-    ok: true,
-    requestId,
-    googleMapsApiKey,
-    warnings: googleMapsApiKey ? [] : ["GOOGLE_MAPS_API_KEY_NOT_CONFIGURED"],
-  });
+  const warnings: string[] = [];
+  if (!googleMapsApiKey) warnings.push("GOOGLE_MAPS_API_KEY_NOT_CONFIGURED");
+  if (!authOk) warnings.push(authError || "APP_PROXY_AUTH_FAILED");
+
+  return jsonResponse(
+    {
+      ok: authOk,
+      requestId,
+      googleMapsApiKey,
+      warnings,
+    },
+    { status: 200 },
+  );
 };

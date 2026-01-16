@@ -64,12 +64,19 @@ function setMapsStatus(text) {
 
 function resolveGoogleMapsApiKey() {
   const dataset = getWidgetDataset();
-  const fromTheme = String(dataset.googleMapsApiKey || "").trim();
-  if (fromTheme) return Promise.resolve(fromTheme);
+  const fromThemeRaw = String(dataset.googleMapsApiKey || "").trim();
+  const themeKey = (() => {
+    if (!fromThemeRaw) return "";
+    const v = fromThemeRaw.toLowerCase();
+    if (v.includes("replace_with") || v.includes("your_google_maps") || v.includes("your-google-maps")) return "";
+    return fromThemeRaw;
+  })();
 
-  // Fallback: if the merchant configured the key server-side (env), fetch it via App Proxy.
-  // This makes "I put the key in env" actually work for the storefront widget.
-  if (_googleMapsApiKeyResolvePromise) return _googleMapsApiKeyResolvePromise;
+  // Prefer server-provided key (App Proxy), so we don't depend on per-theme configuration.
+  // Fallback to theme key if server is unavailable or not configured.
+  if (_googleMapsApiKeyResolvePromise) {
+    return _googleMapsApiKeyResolvePromise.then((k) => k || themeKey);
+  }
 
   _googleMapsApiKeyResolvePromise = fetch("/apps/vtc/api/public-config", {
     method: "GET",
@@ -84,8 +91,24 @@ function resolveGoogleMapsApiKey() {
         return null;
       }
     })
-    .then((json) => String(json?.googleMapsApiKey || "").trim())
-    .catch(() => "");
+    .then((json) => {
+      const key = String(json?.googleMapsApiKey || "").trim();
+      const warnings = Array.isArray(json?.warnings) ? json.warnings : [];
+
+      if (key) {
+        console.log("google-maps: api key source=server", { ok: !!json?.ok, hasKey: true, warnings });
+        return key;
+      }
+
+      if (themeKey) {
+        console.log("google-maps: api key source=theme", { serverOk: !!json?.ok, warnings });
+        return themeKey;
+      }
+
+      console.log("google-maps: api key missing", { serverOk: !!json?.ok, warnings });
+      return "";
+    })
+    .catch(() => themeKey);
 
   return _googleMapsApiKeyResolvePromise;
 }
@@ -209,6 +232,377 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function injectAiAssistantStylesOnce() {
+  if (document.getElementById("vtc-ai-assistant-styles")) return;
+  const style = document.createElement("style");
+  style.id = "vtc-ai-assistant-styles";
+  style.textContent = `
+    .vtc-ai { margin-top: 14px; border: 1px solid rgba(0,0,0,.10); border-radius: 14px; background: rgba(255,255,255,.95); overflow: hidden; }
+    .vtc-ai__header { display:flex; align-items:center; justify-content:space-between; padding: 12px 14px; gap: 10px; }
+    .vtc-ai__title { font-weight: 700; font-size: 14px; }
+    .vtc-ai__badge { font-size: 12px; opacity: .75; }
+    .vtc-ai__body { padding: 0 14px 14px 14px; }
+    .vtc-ai__row { display:flex; gap: 10px; align-items: flex-start; }
+    .vtc-ai__input { width: 100%; min-height: 44px; resize: vertical; border-radius: 12px; border: 1px solid rgba(0,0,0,.14); padding: 10px 12px; font: inherit; }
+    .vtc-ai__btn { border-radius: 12px; border: 1px solid rgba(0,0,0,.12); padding: 10px 12px; background: #111827; color: #fff; cursor:pointer; white-space: nowrap; }
+    .vtc-ai__btn[disabled] { opacity: .6; cursor: not-allowed; }
+    .vtc-ai__btn--subtle { background: #fff; color: #111827; }
+    .vtc-ai__status { margin-top: 10px; font-size: 13px; opacity: .8; }
+    .vtc-ai__error { margin-top: 10px; font-size: 13px; color: #b91c1c; }
+    .vtc-ai__reply { margin-top: 12px; padding: 12px; border-radius: 12px; border: 1px solid rgba(0,0,0,.10); background: rgba(0,0,0,.02); white-space: pre-wrap; line-height: 1.45; }
+    .vtc-ai__actions { display:flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .vtc-ai__rgpd { margin-top: 10px; font-size: 12px; opacity: .75; }
+    .vtc-ai__rgpd a { color: inherit; text-decoration: underline; }
+
+    .vtc-ai-fab { position: fixed; right: 16px; bottom: 92px; z-index: 2147483000; display:none; }
+    .vtc-ai-fab button { border-radius: 999px; border: 1px solid rgba(0,0,0,.12); background: #111827; color: #fff; padding: 12px 14px; font-weight: 700; box-shadow: 0 10px 28px rgba(0,0,0,.18); cursor:pointer; }
+
+    .vtc-ai-modal { position: fixed; inset: 0; z-index: 2147483001; display:none; align-items: flex-end; }
+    .vtc-ai-modal__backdrop { position:absolute; inset:0; background: rgba(0,0,0,.45); }
+    .vtc-ai-modal__sheet { position:relative; width: 100%; max-height: 85vh; border-top-left-radius: 18px; border-top-right-radius: 18px; background: #fff; overflow: auto; padding: 12px; box-shadow: 0 -10px 40px rgba(0,0,0,.25); }
+    .vtc-ai-modal__close { position:absolute; top: 10px; right: 10px; border-radius: 999px; border: 1px solid rgba(0,0,0,.12); background: #fff; padding: 8px 10px; cursor:pointer; }
+
+    @media (max-width: 768px) {
+      .vtc-ai { display:none; }
+      .vtc-ai-fab { display:block; }
+      .vtc-ai-modal { display:flex; }
+      .vtc-ai-modal.is-closed { display:none; }
+      .vtc-ai-modal .vtc-ai { display:block; margin-top: 0; }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function copyToClipboard(text) {
+  const value = String(text || "");
+  if (!value) return Promise.resolve(false);
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard
+      .writeText(value)
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    ta.style.top = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return Promise.resolve(!!ok);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+function getPrivacyPolicyUrl() {
+  const dataset = getWidgetDataset();
+  const fromTheme = String(dataset.privacyPolicyUrl || "").trim();
+  return fromTheme || "/policies/privacy-policy";
+}
+
+function buildAiAssistantContext() {
+  const trip = window.lastTrip || null;
+  const selectedOptions = getSelectedOptions ? getSelectedOptions() : [];
+
+  const pickup = String(trip?.start || "").trim();
+  const dropoff = String(trip?.end || "").trim();
+  const date = String(trip?.pickupDate || "").trim();
+  const time = String(trip?.pickupTime || "").trim();
+  const vehicle = String(trip?.vehicleLabel || "").trim() || String(trip?.vehicle || "").trim();
+  const options = (selectedOptions || []).map((o) => String(o?.label || "").trim()).filter(Boolean);
+
+  const isQuote = !!trip?.isQuote;
+  const price = typeof window.lastPrice === "number" ? window.lastPrice : null;
+  const distance = typeof trip?.distanceKm === "number" ? trip.distanceKm : null;
+  const duration = typeof trip?.durationMinutes === "number" ? trip.durationMinutes : null;
+
+  const context = {
+    pickup,
+    dropoff,
+    date,
+    time,
+    vehicle,
+    currency: "EUR",
+    options,
+    stopsCount: Array.isArray(trip?.stops) ? trip.stops.length : 0,
+    customOption: String(trip?.customOptionText || "").trim(),
+    quote: {
+      price,
+      isQuote,
+      distance,
+      duration,
+    },
+  };
+
+  return context;
+}
+
+function buildTripSummaryText() {
+  const trip = window.lastTrip || null;
+  if (!trip) return "";
+
+  const lines = [];
+  lines.push("Demande VTC (devis)");
+  if (trip.pickupDate || trip.pickupTime) {
+    lines.push(`Date/heure: ${String(trip.pickupDate || "")} ${String(trip.pickupTime || "")}`.trim());
+  }
+  if (trip.start) lines.push(`Départ: ${String(trip.start)}`);
+  if (Array.isArray(trip.stops) && trip.stops.length) {
+    trip.stops.forEach((s, i) => lines.push(`Arrêt ${i + 1}: ${String(s)}`));
+  }
+  if (trip.end) lines.push(`Arrivée: ${String(trip.end)}`);
+
+  if (typeof trip.distanceKm === "number") lines.push(`Distance: ${trip.distanceKm.toFixed(1)} km`);
+  if (typeof trip.durationMinutes === "number") lines.push(`Durée: ${Math.round(trip.durationMinutes)} min`);
+
+  if (trip.vehicleLabel || trip.vehicle) lines.push(`Véhicule: ${String(trip.vehicleLabel || trip.vehicle)}`);
+
+  const selectedOptions = getSelectedOptions ? getSelectedOptions() : [];
+  const optLabels = (selectedOptions || []).map((o) => String(o?.label || "").trim()).filter(Boolean);
+  if (optLabels.length) lines.push(`Options: ${optLabels.join(" · ")}`);
+
+  const customOpt = String(trip.customOptionText || "").trim();
+  if (customOpt) lines.push(`Option personnalisée: ${customOpt}`);
+
+  if (trip.isQuote) {
+    lines.push("Tarif: sur devis");
+  } else if (typeof window.lastPrice === "number") {
+    lines.push(`Tarif estimatif: ${window.lastPrice.toFixed(2)} €`);
+  }
+
+  return lines.join("\n");
+}
+
+function buildWhatsAppUrl(text) {
+  const msg = String(text || "").trim();
+  if (!msg) return "";
+  return `https://wa.me/?text=${encodeURIComponent(msg)}`;
+}
+
+function initAiAssistantUI() {
+  const widget = getWidgetEl();
+  if (!widget) return;
+  if (document.getElementById("vtc-ai-assistant")) return;
+
+  injectAiAssistantStylesOnce();
+
+  // Desktop panel
+  const panel = document.createElement("div");
+  panel.id = "vtc-ai-assistant";
+  panel.className = "vtc-ai";
+  panel.innerHTML = `
+    <div class="vtc-ai__header">
+      <div>
+        <div class="vtc-ai__title">Assistant IA</div>
+        <div class="vtc-ai__badge">Conseils + aide réservation (sans recalcul du prix)</div>
+      </div>
+    </div>
+    <div class="vtc-ai__body">
+      <div class="vtc-ai__row">
+        <textarea id="vtc-ai-input" class="vtc-ai__input" placeholder="Ex: Je suis 2 adultes + 2 valises, quel véhicule me conseillez-vous ?"></textarea>
+        <button id="vtc-ai-send" class="vtc-ai__btn" type="button">Envoyer</button>
+      </div>
+      <div id="vtc-ai-status" class="vtc-ai__status" style="display:none;"></div>
+      <div id="vtc-ai-error" class="vtc-ai__error" style="display:none;"></div>
+      <div id="vtc-ai-reply" class="vtc-ai__reply" style="display:none;"></div>
+      <div class="vtc-ai__actions">
+        <button id="vtc-ai-copy-summary" class="vtc-ai__btn vtc-ai__btn--subtle" type="button">Copier résumé</button>
+        <button id="vtc-ai-copy-reply" class="vtc-ai__btn vtc-ai__btn--subtle" type="button">Copier réponse</button>
+        <a id="vtc-ai-whatsapp" class="vtc-ai__btn" href="#" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+      </div>
+      <div class="vtc-ai__rgpd">
+        RGPD: n’envoyez pas d’informations sensibles. Votre message peut être traité par un service d’IA pour générer une réponse.
+        <a id="vtc-ai-privacy" href="#" target="_blank" rel="noopener noreferrer">Politique de confidentialité</a>.
+      </div>
+    </div>
+  `.trim();
+
+  // Mobile: FAB + bottom sheet
+  const fab = document.createElement("div");
+  fab.className = "vtc-ai-fab";
+  fab.innerHTML = `<button id="vtc-ai-fab-btn" type="button">Assistant IA</button>`;
+
+  const modal = document.createElement("div");
+  modal.id = "vtc-ai-modal";
+  modal.className = "vtc-ai-modal is-closed";
+  modal.innerHTML = `
+    <div class="vtc-ai-modal__backdrop" data-close="1"></div>
+    <div class="vtc-ai-modal__sheet">
+      <button class="vtc-ai-modal__close" type="button" data-close="1">Fermer</button>
+      <div id="vtc-ai-modal-mount"></div>
+    </div>
+  `.trim();
+
+  const summaryDiv = document.getElementById("vtc-summary");
+  if (summaryDiv && summaryDiv.insertAdjacentElement) {
+    summaryDiv.insertAdjacentElement("afterend", panel);
+  } else {
+    widget.appendChild(panel);
+  }
+  document.body.appendChild(fab);
+  document.body.appendChild(modal);
+
+  // In mobile modal, we reuse the same panel node (move it).
+  function openModal() {
+    const mount = document.getElementById("vtc-ai-modal-mount");
+    if (mount && panel.parentNode !== mount) mount.appendChild(panel);
+    modal.classList.remove("is-closed");
+  }
+  function closeModal() {
+    modal.classList.add("is-closed");
+    // Put it back under summary (desktop spot) so it exists in DOM when leaving mobile.
+    const newSummaryDiv = document.getElementById("vtc-summary");
+    if (newSummaryDiv && newSummaryDiv.insertAdjacentElement) {
+      newSummaryDiv.insertAdjacentElement("afterend", panel);
+    } else {
+      widget.appendChild(panel);
+    }
+  }
+
+  fab.querySelector("#vtc-ai-fab-btn")?.addEventListener("click", () => openModal());
+  modal.addEventListener("click", (e) => {
+    const target = e.target;
+    if (target && target.getAttribute && target.getAttribute("data-close") === "1") closeModal();
+  });
+
+  const privacyLink = panel.querySelector("#vtc-ai-privacy");
+  if (privacyLink) privacyLink.setAttribute("href", getPrivacyPolicyUrl());
+
+  const input = panel.querySelector("#vtc-ai-input");
+  const sendBtn = panel.querySelector("#vtc-ai-send");
+  const statusEl = panel.querySelector("#vtc-ai-status");
+  const errorEl = panel.querySelector("#vtc-ai-error");
+  const replyEl = panel.querySelector("#vtc-ai-reply");
+  const copySummaryBtn = panel.querySelector("#vtc-ai-copy-summary");
+  const copyReplyBtn = panel.querySelector("#vtc-ai-copy-reply");
+  const whatsappLink = panel.querySelector("#vtc-ai-whatsapp");
+
+  let lastReply = "";
+
+  function setStatus(text) {
+    if (!statusEl) return;
+    const v = String(text || "").trim();
+    statusEl.style.display = v ? "block" : "none";
+    statusEl.textContent = v;
+  }
+  function setError(text) {
+    if (!errorEl) return;
+    const v = String(text || "").trim();
+    errorEl.style.display = v ? "block" : "none";
+    errorEl.textContent = v;
+  }
+  function setReply(text) {
+    if (!replyEl) return;
+    const v = String(text || "").trim();
+    replyEl.style.display = v ? "block" : "none";
+    replyEl.textContent = v;
+  }
+
+  async function sendMessage() {
+    const message = String(input?.value || "").trim();
+    setError("");
+    setStatus("");
+    if (!message) {
+      setError("Écrivez un message pour l’assistant.");
+      return;
+    }
+
+    if (sendBtn) sendBtn.setAttribute("disabled", "disabled");
+    setStatus("Analyse en cours…");
+
+    const body = {
+      userMessage: message,
+      context: buildAiAssistantContext(),
+    };
+
+    let json = null;
+    try {
+      const res = await fetch("/apps/vtc/api/ai-assistant", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        credentials: "same-origin",
+        body: JSON.stringify(body),
+      });
+
+      try {
+        json = await res.json();
+      } catch {
+        json = null;
+      }
+
+      if (!res.ok || !json?.ok) {
+        const err = String(json?.error || "Erreur serveur");
+        if (res.status === 404 && err === "AI_DISABLED") {
+          setError("Assistant indisponible (désactivé côté serveur).");
+        } else if (res.status === 429) {
+          const retry = typeof json?.retryAfterSeconds === "number" ? json.retryAfterSeconds : 30;
+          setError(`Trop de demandes. Réessayez dans ${retry}s.`);
+        } else {
+          setError("Impossible de générer une réponse pour le moment.");
+        }
+        setStatus("");
+        return;
+      }
+
+      lastReply = String(json.reply || "").trim();
+      setReply(lastReply);
+      setStatus("");
+      return;
+    } catch (e) {
+      console.error("ai-assistant: fetch failed", e);
+      setError("Connexion impossible. Vérifiez votre réseau.");
+      setStatus("");
+      return;
+    } finally {
+      if (sendBtn) sendBtn.removeAttribute("disabled");
+    }
+  }
+
+  sendBtn?.addEventListener("click", () => sendMessage());
+  input?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  copySummaryBtn?.addEventListener("click", async () => {
+    const txt = buildTripSummaryText();
+    const ok = await copyToClipboard(txt);
+    setStatus(ok ? "Résumé copié." : "Impossible de copier le résumé.");
+    setTimeout(() => setStatus(""), 2500);
+  });
+
+  copyReplyBtn?.addEventListener("click", async () => {
+    const txt = String(lastReply || "").trim();
+    const ok = await copyToClipboard(txt);
+    setStatus(ok ? "Réponse copiée." : "Impossible de copier la réponse.");
+    setTimeout(() => setStatus(""), 2500);
+  });
+
+  whatsappLink?.addEventListener("click", (e) => {
+    e.preventDefault();
+    const summary = buildTripSummaryText();
+    const msg = lastReply ? `${summary}\n\n${lastReply}` : summary;
+    const url = buildWhatsAppUrl(msg);
+    if (!url) {
+      setError("Calculez un trajet pour générer un résumé WhatsApp.");
+      return;
+    }
+    whatsappLink.setAttribute("href", url);
+    window.open(url, "_blank", "noopener,noreferrer");
+  });
 }
 
 function getCustomOptionTextFromUI() {
@@ -696,11 +1090,23 @@ function updateSelectedVehicleCardUI(tariffsEl, selectedVehicleId) {
   tariffsEl.querySelectorAll("[data-vehicle-card]").forEach((card) => {
     const id = String(card.getAttribute("data-vehicle-card") || "").trim();
     const isSelected = !!selectedVehicleId && id === selectedVehicleId;
+
+    try {
+      card.classList.toggle("is-selected", isSelected);
+    } catch {
+      // ignore
+    }
+
     card.style.border = isSelected ? "2px solid #111" : "1px solid #e5e5e5";
     card.style.opacity = isSelected ? "1" : "1";
 
     const btn = card.querySelector("button[data-vehicle-id]");
     if (btn) {
+      try {
+        btn.classList.toggle("is-selected", isSelected);
+      } catch {
+        // ignore
+      }
       btn.textContent = isSelected ? "Sélectionné" : "Choisir";
       btn.disabled = false;
       btn.style.opacity = "1";
@@ -802,7 +1208,20 @@ function renderVehiclesAndOptions() {
       vehiclesContainer.innerHTML = cfg.vehicles
         .map((v, idx) => {
           const checked = idx === 0 ? "checked" : "";
-          return `<label><input type="radio" name="vehicle" value="${String(v.id).replace(/"/g, "&quot;")}" ${checked}> ${String(v.label)}</label>`;
+
+          const imageSrc = v.imageUrl || getVehicleDemoImage(v.id);
+          const safeId = String(v.id).replace(/"/g, "&quot;");
+          const safeLabel = String(v.label);
+          return `
+            <label class="vtc-choice vtc-vehicle-choice">
+              <input type="radio" name="vehicle" value="${safeId}" ${checked}>
+              <img class="vtc-choice-image" src="${imageSrc}" alt="${safeLabel.replace(/"/g, "&quot;")}">
+              <span class="vtc-choice-text">
+                <span class="vtc-choice-title">${safeLabel}</span>
+                <span class="vtc-choice-sub">Sélectionnez pour calculer</span>
+              </span>
+            </label>
+          `.trim();
         })
         .join("\n");
 
@@ -812,6 +1231,16 @@ function renderVehiclesAndOptions() {
 
       vehiclesContainer.querySelectorAll('input[name="vehicle"]').forEach((radio) => {
         radio.addEventListener("change", () => {
+          try {
+            vehiclesContainer.querySelectorAll(".vtc-choice").forEach((label) => {
+              label.classList.remove("is-selected");
+            });
+            const maybeLabel = radio.closest?.(".vtc-choice");
+            if (maybeLabel) maybeLabel.classList.add("is-selected");
+          } catch {
+            // ignore
+          }
+
           const id = getSelectedVehicleIdFromUI();
           const vehicle = getVehicleById(id);
           _widgetState.selectedVehicleId = vehicle?.id || id || null;
@@ -824,6 +1253,15 @@ function renderVehiclesAndOptions() {
           }
         });
       });
+
+      // Ensure initial UI state is selected
+      try {
+        const firstChecked = vehiclesContainer.querySelector('input[name="vehicle"]:checked');
+        const maybeLabel = firstChecked?.closest?.(".vtc-choice");
+        if (maybeLabel) maybeLabel.classList.add("is-selected");
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -841,8 +1279,11 @@ function renderVehiclesAndOptions() {
               ? ` (+${o.amount.toFixed(2)} €)`
               : "";
         return `
-          <label class="vtc-checkbox">
-            <input type="checkbox" data-option-id="${String(o.id).replace(/"/g, "&quot;")}"> ${String(o.label)}${feeText}
+          <label class="vtc-choice vtc-option-choice vtc-checkbox">
+            <input type="checkbox" data-option-id="${String(o.id).replace(/"/g, "&quot;")}">
+            <span class="vtc-choice-text">
+              <span class="vtc-choice-title">${String(o.label)}${feeText}</span>
+            </span>
           </label>
         `.trim();
       })
@@ -891,26 +1332,22 @@ function renderTariffsAfterCalculation(km, stopsCount, pickupTime, pickupDate, k
       : `<strong>${computed.total.toFixed(2)} €</strong>`;
 
     return `
-      <div data-vehicle-card="${String(v.id).replace(/"/g, "&quot;")}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin-top:10px;background:#fff;" data-vehicle-card>
-        <div style="display:flex;align-items:center;gap:12px;min-width:0;">
-          <img src="${imageSrc}" alt="${String(v.label).replace(/"/g, "&quot;")}" style="width:70px;height:46px;border-radius:10px;border:1px solid #ddd;background:#fff;object-fit:cover;" />
+      <div class="vtc-tariff-card" data-vehicle-card="${String(v.id).replace(/"/g, "&quot;")}">
+        <div class="vtc-tariff-left">
+          <img class="vtc-tariff-image" src="${imageSrc}" alt="${String(v.label).replace(/"/g, "&quot;")}" />
           <div style="min-width:0;">
-            <div style="font-weight:700;">${v.label}</div>
-            <div style="font-size:14px;opacity:0.85;">${right}</div>
+            <div class="vtc-tariff-title">${v.label}</div>
+            <div class="vtc-tariff-price">${right}</div>
           </div>
         </div>
-        <button
-          type="button"
-          data-vehicle-id="${String(v.id).replace(/"/g, "&quot;")}" 
-          style="padding:10px 14px;border-radius:10px;border:1px solid #111;background:#111;color:#fff;cursor:pointer;flex:0 0 auto;"
-        >Choisir</button>
+        <button type="button" class="vtc-tariff-select" data-vehicle-id="${String(v.id).replace(/"/g, "&quot;")}">Choisir</button>
       </div>
     `.trim();
   });
 
   tariffsEl.innerHTML = `
     <h3 style="font-size:18px;margin:0 0 10px 0;">Tarifs</h3>
-    ${lines.join("\n")}
+    <div class="vtc-tariffs-grid">${lines.join("\n")}</div>
   `.trim();
 
   tariffsEl.querySelectorAll("button[data-vehicle-id]").forEach((btn) => {
@@ -1815,6 +2252,7 @@ function renderTripSummaryFromLastTrip() {
 document.addEventListener("DOMContentLoaded", () => {
   renderVehiclesAndOptions();
   renderTripSummaryFromLastTrip();
+  initAiAssistantUI();
 
   const customOptionInput = document.getElementById("customOption");
   if (customOptionInput) {

@@ -57,3 +57,22 @@ services:
       # Compat legacy
       - key: SLACK_WEBHOOK_URL
         sync: false
+
+      # Google Maps (clé côté serveur pour le widget)
+      - key: VTC_GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      # Compat (si vous utilisez un autre nom d'env)
+      - key: PUBLIC_GOOGLE_MAPS_API_KEY
+        sync: false
+
+      # Assistant IA (optionnel)
+      - key: AI_ASSISTANT_ENABLED
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
