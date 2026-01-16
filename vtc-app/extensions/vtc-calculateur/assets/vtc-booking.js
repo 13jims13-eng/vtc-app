@@ -16,6 +16,7 @@ let _europeBoundsCache = null;
 let _widgetConfigCache = null;
 let _googleMapsLoadPromise = null;
 let _googleMapsApiKeyResolvePromise = null;
+let _startGeoLatLng = null;
 let _widgetState = {
   selectedVehicleId: null,
   selectedVehicleLabel: null,
@@ -1827,7 +1828,8 @@ function getVehicleImageSrc(vehicle) {
 async function calculatePrice(_retry) {
   const widgetEl = getWidgetEl();
   const widget = widgetEl || document;
-  const start = document.getElementById("start")?.value || "";
+  const startEl = document.getElementById("start");
+  const start = startEl?.value || "";
   const end = document.getElementById("end")?.value || "";
   const pickupTime = document.getElementById("pickupTime")?.value || "";
   const pickupDate = document.getElementById("pickupDate")?.value || "";
@@ -1895,8 +1897,10 @@ async function calculatePrice(_retry) {
     directionsService = new google.maps.DirectionsService();
   }
 
+  const origin = startEl?.dataset?.vtcGeo === "1" && _startGeoLatLng ? _startGeoLatLng : start;
+
   const request = {
-    origin: start,
+    origin,
     destination: end,
     waypoints,
     optimizeWaypoints: false,
@@ -1953,6 +1957,7 @@ async function calculatePrice(_retry) {
     setCustomOptionText(getCustomOptionTextFromUI());
     window.lastTrip = {
       start,
+      startLatLng: startEl?.dataset?.vtcGeo === "1" && _startGeoLatLng ? _startGeoLatLng : null,
       end,
       stops: waypoints.map((w) => w.location),
       pickupDate,
@@ -2570,12 +2575,20 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      if (!(window.google && google.maps && google.maps.Geocoder)) {
-        const ok = await ensureGoogleMapsLoaded("geo");
-        if (!ok || !(window.google && google.maps && google.maps.Geocoder)) {
-          alert("Google Maps n’est pas disponible. Vérifiez la configuration.");
-          return;
-        }
+      // Ensure Maps JS is loaded (Directions uses it). Reverse geocoding is optional.
+      const ok = await ensureGoogleMapsLoaded("geo");
+      if (!ok || !(window.google && google.maps)) {
+        alert("Google Maps n’est pas disponible. Vérifiez la configuration.");
+        return;
+      }
+
+      // If the user edits the field after using geolocation, stop using lat/lng.
+      if (!startInput._vtcGeoResetBound) {
+        startInput._vtcGeoResetBound = true;
+        startInput.addEventListener("input", () => {
+          startInput.dataset.vtcGeo = "0";
+          _startGeoLatLng = null;
+        });
       }
 
       navigator.geolocation.getCurrentPosition(
@@ -2583,17 +2596,29 @@ document.addEventListener("DOMContentLoaded", () => {
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
 
-          const geocoder = new google.maps.Geocoder();
-          geocoder.geocode({ location: { lat, lng } }, (results, status) => {
-            if (status !== "OK" || !results || !results[0]) {
-              alert("Impossible de récupérer une adresse à partir de votre position.");
-              return;
-            }
+          // Always keep a usable origin, even if Geocoding API isn't enabled.
+          _startGeoLatLng = { lat, lng };
+          startInput.dataset.vtcGeo = "1";
+          startInput.value = "Position actuelle";
 
-            startInput.value = results[0].formatted_address || "";
-            startInput.dataset.lat = String(lat);
-            startInput.dataset.lng = String(lng);
-          });
+          // Best effort: reverse geocode into a nicer address when available.
+          if (google.maps.Geocoder) {
+            try {
+              const geocoder = new google.maps.Geocoder();
+              geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+                if (status === "OK" && results && results[0] && results[0].formatted_address) {
+                  startInput.value = results[0].formatted_address;
+                  return;
+                }
+                // Fallback: show coordinates for clarity.
+                startInput.value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+              });
+            } catch {
+              startInput.value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+            }
+          } else {
+            startInput.value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+          }
         },
         () => {
           alert("Autorisez la localisation pour utiliser votre position.");
