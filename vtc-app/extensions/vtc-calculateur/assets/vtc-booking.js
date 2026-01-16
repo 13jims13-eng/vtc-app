@@ -72,10 +72,16 @@ function resolveGoogleMapsApiKey() {
     return fromThemeRaw;
   })();
 
-  // Prefer server-provided key (App Proxy), so we don't depend on per-theme configuration.
-  // Fallback to theme key if server is unavailable or not configured.
+  // Backward compatible: if the merchant configured a key in the theme setting,
+  // use it first (per-store key + correct referrer restrictions).
+  if (themeKey) {
+    console.log("google-maps: api key source=theme", { serverOk: null, warnings: [] });
+    return Promise.resolve(themeKey);
+  }
+
+  // Fallback: use server-provided key (App Proxy) when theme key is missing.
   if (_googleMapsApiKeyResolvePromise) {
-    return _googleMapsApiKeyResolvePromise.then((k) => k || themeKey);
+    return _googleMapsApiKeyResolvePromise;
   }
 
   _googleMapsApiKeyResolvePromise = fetch("/apps/vtc/api/public-config", {
@@ -98,11 +104,6 @@ function resolveGoogleMapsApiKey() {
       if (key) {
         console.log("google-maps: api key source=server", { ok: !!json?.ok, hasKey: true, warnings });
         return key;
-      }
-
-      if (themeKey) {
-        console.log("google-maps: api key source=theme", { serverOk: !!json?.ok, warnings });
-        return themeKey;
       }
 
       console.log("google-maps: api key missing", { serverOk: !!json?.ok, warnings });
