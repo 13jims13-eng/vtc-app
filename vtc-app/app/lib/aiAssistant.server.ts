@@ -375,7 +375,23 @@ export async function callOpenAi({
       }
     }
 
-    return { ok: true as const, reply: content.trim(), api: "chat.completions" as const, tokenParam };
+    const reply = content.trim();
+    if (!reply) {
+      // Diagnostics for operators (Render logs). Do not include request content.
+      try {
+        const keys = data && typeof data === "object" ? Object.keys(data).slice(0, 25) : [];
+        const first = Array.isArray(choices) && choices.length ? (choices[0] as UnknownRecord) : null;
+        const msg = first?.message && typeof first.message === "object" ? (first.message as UnknownRecord) : null;
+        const msgKeys = msg ? Object.keys(msg).slice(0, 25) : [];
+        const contentType = msg && "content" in msg ? (Array.isArray(msg.content) ? "array" : typeof msg.content) : "missing";
+        const preview = text ? text.slice(0, 600) : null;
+        console.error("openai chat empty", { model, tokenParam, keys, msgKeys, contentType, preview });
+      } catch {
+        // ignore
+      }
+    }
+
+    return { ok: true as const, reply, api: "chat.completions" as const, tokenParam };
   }
 
   async function callResponses() {
