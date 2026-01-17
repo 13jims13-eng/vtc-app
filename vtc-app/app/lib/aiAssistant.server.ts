@@ -303,6 +303,11 @@ export async function callOpenAi({
       ? "max_completion_tokens"
       : "max_tokens";
 
+    const sampling =
+      modelLower.startsWith("gpt-5") || modelLower.startsWith("o1")
+        ? {}
+        : { temperature: 0.25 };
+
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -311,7 +316,7 @@ export async function callOpenAi({
       },
       body: JSON.stringify({
         model,
-        temperature: 0.25,
+        ...sampling,
         ...tokenLimits,
         messages,
       }),
