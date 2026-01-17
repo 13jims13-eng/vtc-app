@@ -250,35 +250,305 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function parseCssColorToRgba(color) {
+  const c = String(color || "").trim();
+  if (!c) return null;
+
+  // Hex: #rgb / #rrggbb
+  if (c[0] === "#") {
+    const hex = c.slice(1);
+    if (hex.length === 3) {
+      const r = parseInt(hex[0] + hex[0], 16);
+      const g = parseInt(hex[1] + hex[1], 16);
+      const b = parseInt(hex[2] + hex[2], 16);
+      if ([r, g, b].every(Number.isFinite)) return { r, g, b, a: 1 };
+    }
+    if (hex.length === 6) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      if ([r, g, b].every(Number.isFinite)) return { r, g, b, a: 1 };
+    }
+  }
+
+  // rgb()/rgba()
+  const m = c
+    .replace(/\s+/g, " ")
+    .match(/^rgba?\((\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*(0|1|0?\.\d+))?\)$/i);
+  if (m) {
+    const r = Number(m[1]);
+    const g = Number(m[2]);
+    const b = Number(m[3]);
+    const a = m[4] === undefined ? 1 : Number(m[4]);
+    if ([r, g, b, a].every(Number.isFinite)) return { r, g, b, a };
+  }
+
+  return null;
+}
+
+function srgbToLinear01(x) {
+  const v = x / 255;
+  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+
+function relativeLuminanceFromRgb({ r, g, b }) {
+  const R = srgbToLinear01(r);
+  const G = srgbToLinear01(g);
+  const B = srgbToLinear01(b);
+  return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+}
+
+function compositeOverWhite({ r, g, b, a }) {
+  const alpha = typeof a === "number" ? Math.min(1, Math.max(0, a)) : 1;
+  return {
+    r: Math.round(r * alpha + 255 * (1 - alpha)),
+    g: Math.round(g * alpha + 255 * (1 - alpha)),
+    b: Math.round(b * alpha + 255 * (1 - alpha)),
+  };
+}
+
+function pickTextOnColor(backgroundColor) {
+  const rgba = parseCssColorToRgba(backgroundColor);
+  if (!rgba) return "#fff";
+  const rgb = compositeOverWhite(rgba);
+  const lum = relativeLuminanceFromRgb(rgb);
+  return lum < 0.55 ? "#fff" : "#0b0f19";
+}
+
+function applyAiAssistantThemeVars(targetEl, widget) {
+  if (!targetEl || !widget || typeof window === "undefined" || !window.getComputedStyle) return;
+
+  const cs = window.getComputedStyle(widget);
+  const accent = String(cs.getPropertyValue("--vtc-accent") || "").trim();
+  const accent2 = String(cs.getPropertyValue("--vtc-accent-2") || "").trim() || accent;
+  const border = String(cs.getPropertyValue("--vtc-border") || "").trim();
+  const text = String(cs.getPropertyValue("--vtc-text") || "").trim();
+  const muted = String(cs.getPropertyValue("--vtc-muted") || "").trim();
+  const subtle = String(cs.getPropertyValue("--vtc-subtle") || "").trim();
+  const card = String(cs.getPropertyValue("--vtc-card") || "").trim();
+  const card2 = String(cs.getPropertyValue("--vtc-card-2") || "").trim();
+  const danger = String(cs.getPropertyValue("--vtc-danger") || "").trim();
+  const radiusSm = String(cs.getPropertyValue("--vtc-radius-sm") || "").trim();
+
+  // If CSS variables are not ready (or not present), fallback to theme class palette.
+  // This keeps the Assistant IA consistent with the calculator style.
+  let fallback = null;
+  if (!accent && widget.classList) {
+    if (widget.classList.contains("vtc-theme--black_gold")) {
+      fallback = {
+        accent: "#d4af37",
+        accent2: "#f59e0b",
+        border: "rgba(212, 175, 55, 0.22)",
+        text: "rgba(255, 255, 255, 0.93)",
+        muted: "rgba(255, 255, 255, 0.74)",
+        subtle: "rgba(255, 255, 255, 0.56)",
+        card: "rgba(255, 255, 255, 0.05)",
+        card2: "rgba(255, 255, 255, 0.075)",
+        danger: "#ef4444",
+        radius: "12px",
+      };
+    } else if (widget.classList.contains("vtc-theme--blue")) {
+      fallback = {
+        accent: "#7c3aed",
+        accent2: "#22d3ee",
+        border: "rgba(255, 255, 255, 0.12)",
+        text: "rgba(255, 255, 255, 0.92)",
+        muted: "rgba(255, 255, 255, 0.72)",
+        subtle: "rgba(255, 255, 255, 0.55)",
+        card: "rgba(255, 255, 255, 0.06)",
+        card2: "rgba(255, 255, 255, 0.085)",
+        danger: "#ef4444",
+        radius: "12px",
+      };
+    }
+  }
+
+  // Apply whatever we can (accent can be missing if CSS not ready yet).
+  const hasThemeVars = !!(accent || border || text || card || fallback);
+  if (!hasThemeVars) return;
+
+  const resolvedAccent = accent || fallback?.accent || "";
+  const resolvedAccent2 = accent2 || fallback?.accent2 || resolvedAccent;
+  const resolvedBorder = border || fallback?.border || "";
+  const resolvedText = text || fallback?.text || "";
+  const resolvedMuted = muted || fallback?.muted || "";
+  const resolvedSubtle = subtle || fallback?.subtle || "";
+  const resolvedDanger = danger || fallback?.danger || "";
+  const resolvedRadius = radiusSm || fallback?.radius || "";
+  const resolvedCard = card || fallback?.card || "";
+  const resolvedCard2 = card2 || fallback?.card2 || "";
+
+  if (resolvedAccent) targetEl.style.setProperty("--vtc-ai-accent", resolvedAccent);
+  if (resolvedAccent2) targetEl.style.setProperty("--vtc-ai-accent2", resolvedAccent2);
+  if (resolvedBorder) targetEl.style.setProperty("--vtc-ai-border", resolvedBorder);
+
+  // Readability fix: the calculator can be "dark" while cards are "light" (or vice-versa).
+  // Force the assistant panel to use a light surface + dark text for consistent readability.
+  targetEl.style.setProperty("--vtc-ai-surface", "rgba(255,255,255,.96)");
+  targetEl.style.setProperty("--vtc-ai-surface2", "rgba(17,24,39,.04)");
+  targetEl.style.setProperty("--vtc-ai-text", "#111827");
+  targetEl.style.setProperty("--vtc-ai-muted", "rgba(17,24,39,.78)");
+  targetEl.style.setProperty("--vtc-ai-subtle", "rgba(17,24,39,.58)");
+
+  if (resolvedDanger) targetEl.style.setProperty("--vtc-ai-danger", resolvedDanger);
+  if (resolvedRadius) targetEl.style.setProperty("--vtc-ai-radius", resolvedRadius);
+
+  // Primary button matches widget gradient buttons.
+  if (resolvedAccent) {
+    targetEl.style.setProperty(
+      "--vtc-ai-btnBg",
+      `linear-gradient(135deg, ${resolvedAccent}, ${resolvedAccent2 || resolvedAccent})`
+    );
+    targetEl.style.setProperty("--vtc-ai-btnText", pickTextOnColor(resolvedAccent));
+  }
+  // Inputs should be clearly readable on light surface.
+  targetEl.style.setProperty("--vtc-ai-inputBg", "rgba(255,255,255,.92)");
+  targetEl.style.setProperty("--vtc-ai-inputBorder", "rgba(17,24,39,.22)");
+  targetEl.style.setProperty("--vtc-ai-backdrop", "rgba(0,0,0,.55)");
+}
+
+function applyAiAssistantThemeWithRetry({ panel, fab, modal, widget, tries = 10 }) {
+  if (!widget) return;
+  let remaining = Number.isFinite(tries) ? tries : 10;
+
+  const tick = () => {
+    applyAiAssistantThemeVars(panel, widget);
+    applyAiAssistantThemeVars(fab, widget);
+    applyAiAssistantThemeVars(modal, widget);
+
+    const themed =
+      !!(panel && panel.style && String(panel.style.getPropertyValue("--vtc-ai-accent") || "").trim()) ||
+      !!(panel && panel.style && String(panel.style.getPropertyValue("--vtc-ai-border") || "").trim());
+    if (themed) return;
+
+    remaining -= 1;
+    if (remaining <= 0) return;
+    window.setTimeout(tick, 180);
+  };
+
+  tick();
+}
+
 function injectAiAssistantStylesOnce() {
   if (document.getElementById("vtc-ai-assistant-styles")) return;
   const style = document.createElement("style");
   style.id = "vtc-ai-assistant-styles";
   style.textContent = `
-    .vtc-ai { margin-top: 14px; border: 1px solid rgba(0,0,0,.10); border-radius: 14px; background: rgba(255,255,255,.95); overflow: hidden; }
+    .vtc-ai {
+      margin-top: 14px;
+      border: 1px solid var(--vtc-ai-border, rgba(0,0,0,.10));
+      border-radius: var(--vtc-ai-radius, 14px);
+      background: var(--vtc-ai-surface, rgba(255,255,255,.95));
+      color: var(--vtc-ai-text, #111827);
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
     .vtc-ai__header { display:flex; align-items:center; justify-content:space-between; padding: 12px 14px; gap: 10px; }
-    .vtc-ai__title { font-weight: 700; font-size: 14px; }
-    .vtc-ai__badge { font-size: 12px; opacity: .75; }
+    .vtc-ai__title { font-weight: 850; font-size: 15px; letter-spacing: -0.012em; }
+    .vtc-ai__badge { font-size: 12.5px; line-height: 1.35; font-weight: 650; color: var(--vtc-ai-muted, rgba(17,24,39,.80)); }
     .vtc-ai__body { padding: 0 14px 14px 14px; }
     .vtc-ai__row { display:flex; gap: 10px; align-items: flex-start; }
-    .vtc-ai__input { width: 100%; min-height: 44px; resize: vertical; border-radius: 12px; border: 1px solid rgba(0,0,0,.14); padding: 10px 12px; font: inherit; }
-    .vtc-ai__btn { border-radius: 12px; border: 1px solid rgba(0,0,0,.12); padding: 10px 12px; background: #111827; color: #fff; cursor:pointer; white-space: nowrap; }
-    .vtc-ai__btn[disabled] { opacity: .6; cursor: not-allowed; }
-    .vtc-ai__btn--subtle { background: #fff; color: #111827; }
-    .vtc-ai__status { margin-top: 10px; font-size: 13px; opacity: .8; }
-    .vtc-ai__error { margin-top: 10px; font-size: 13px; color: #b91c1c; }
-    .vtc-ai__reply { margin-top: 12px; padding: 12px; border-radius: 12px; border: 1px solid rgba(0,0,0,.10); background: rgba(0,0,0,.02); white-space: pre-wrap; line-height: 1.45; }
+    .vtc-ai__input {
+      width: 100%;
+      min-height: 44px;
+      resize: vertical;
+      border-radius: var(--vtc-ai-radius, 12px);
+      border: 1px solid var(--vtc-ai-inputBorder, rgba(0,0,0,.14));
+      background: var(--vtc-ai-inputBg, #fff);
+      color: var(--vtc-ai-text, #111827);
+      padding: 10px 12px;
+      font-size: 14px;
+      line-height: 1.45;
+      font: inherit;
+      outline: none;
+      transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    }
+    .vtc-ai__input::placeholder { color: var(--vtc-ai-subtle, rgba(17,24,39,.48)); }
+    .vtc-ai__input:focus {
+      border-color: color-mix(in srgb, var(--vtc-ai-accent, #111827) 70%, transparent);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--vtc-ai-accent, #111827) 18%, transparent);
+    }
+    .vtc-ai__btn {
+      border-radius: var(--vtc-ai-radius, 12px);
+      border: 1px solid color-mix(in srgb, var(--vtc-ai-border, rgba(0,0,0,.12)) 100%, transparent);
+      padding: 10px 12px;
+      background: var(--vtc-ai-btnBg, #111827);
+      color: var(--vtc-ai-btnText, #fff);
+      cursor:pointer;
+      white-space: nowrap;
+      font-weight: 750;
+      font-size: 13px;
+      letter-spacing: 0.01em;
+      transition: transform 120ms ease, filter 120ms ease, opacity 120ms ease;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .vtc-ai__btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
+    .vtc-ai__btn:active { transform: translateY(0); }
+    .vtc-ai__btn[disabled] { opacity: .6; cursor: not-allowed; transform:none; }
+    .vtc-ai__btn--subtle {
+      background: transparent;
+      color: var(--vtc-ai-text, #111827);
+      border-color: var(--vtc-ai-border, rgba(0,0,0,.12));
+    }
+    .vtc-ai__status { margin-top: 10px; font-size: 13px; color: var(--vtc-ai-muted, rgba(0,0,0,.8)); }
+    .vtc-ai__error { margin-top: 10px; font-size: 13px; color: var(--vtc-ai-danger, #b91c1c); }
+    .vtc-ai__reply {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: var(--vtc-ai-radius, 12px);
+      border: 1px solid var(--vtc-ai-border, rgba(0,0,0,.10));
+      background: var(--vtc-ai-surface2, rgba(0,0,0,.02));
+      white-space: pre-wrap;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--vtc-ai-text, #111827);
+    }
     .vtc-ai__actions { display:flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-    .vtc-ai__rgpd { margin-top: 10px; font-size: 12px; opacity: .75; }
+    .vtc-ai__rgpd { margin-top: 10px; font-size: 12px; line-height: 1.35; color: var(--vtc-ai-muted, rgba(17,24,39,.74)); }
     .vtc-ai__rgpd a { color: inherit; text-decoration: underline; }
 
     .vtc-ai-fab { position: fixed; right: 16px; bottom: 92px; z-index: 2147483000; display:none; }
-    .vtc-ai-fab button { border-radius: 999px; border: 1px solid rgba(0,0,0,.12); background: #111827; color: #fff; padding: 12px 14px; font-weight: 700; box-shadow: 0 10px 28px rgba(0,0,0,.18); cursor:pointer; }
+    .vtc-ai-fab button {
+      border-radius: 999px;
+      border: 1px solid var(--vtc-ai-border, rgba(0,0,0,.12));
+      background: var(--vtc-ai-btnBg, #111827);
+      color: var(--vtc-ai-btnText, #fff);
+      padding: 12px 14px;
+      font-weight: 800;
+      box-shadow: 0 10px 28px rgba(0,0,0,.18);
+      cursor:pointer;
+    }
 
     .vtc-ai-modal { position: fixed; inset: 0; z-index: 2147483001; display:none; align-items: flex-end; }
-    .vtc-ai-modal__backdrop { position:absolute; inset:0; background: rgba(0,0,0,.45); }
-    .vtc-ai-modal__sheet { position:relative; width: 100%; max-height: 85vh; border-top-left-radius: 18px; border-top-right-radius: 18px; background: #fff; overflow: auto; padding: 12px; box-shadow: 0 -10px 40px rgba(0,0,0,.25); }
-    .vtc-ai-modal__close { position:absolute; top: 10px; right: 10px; border-radius: 999px; border: 1px solid rgba(0,0,0,.12); background: #fff; padding: 8px 10px; cursor:pointer; }
+    .vtc-ai-modal__backdrop { position:absolute; inset:0; background: var(--vtc-ai-backdrop, rgba(0,0,0,.45)); }
+    .vtc-ai-modal__sheet {
+      position:relative;
+      width: 100%;
+      max-height: 85vh;
+      border-top-left-radius: 18px;
+      border-top-right-radius: 18px;
+      background: var(--vtc-ai-surface, #fff);
+      color: var(--vtc-ai-text, #111827);
+      overflow: auto;
+      padding: 12px;
+      box-shadow: 0 -10px 40px rgba(0,0,0,.25);
+      border-top: 1px solid var(--vtc-ai-border, rgba(0,0,0,.12));
+    }
+    .vtc-ai-modal__close {
+      position:absolute;
+      top: 10px;
+      right: 10px;
+      border-radius: 999px;
+      border: 1px solid var(--vtc-ai-border, rgba(0,0,0,.12));
+      background: transparent;
+      color: var(--vtc-ai-text, #111827);
+      padding: 8px 10px;
+      cursor:pointer;
+    }
 
     @media (max-width: 768px) {
       .vtc-ai { display:none; }
@@ -327,6 +597,7 @@ function getPrivacyPolicyUrl() {
 function buildAiAssistantContext() {
   const trip = window.lastTrip || null;
   const selectedOptions = getSelectedOptions ? getSelectedOptions() : [];
+  const cfg = typeof getWidgetConfig === "function" ? getWidgetConfig() : null;
 
   const pickup = String(trip?.start || "").trim();
   const dropoff = String(trip?.end || "").trim();
@@ -340,6 +611,31 @@ function buildAiAssistantContext() {
   const distance = typeof trip?.distanceKm === "number" ? trip.distanceKm : null;
   const duration = typeof trip?.durationMinutes === "number" ? trip.durationMinutes : null;
 
+  const vehiclesCatalog = Array.isArray(cfg?.vehicles)
+    ? cfg.vehicles
+        .map((v) => {
+          const id = String(v?.id || "").trim();
+          const label = String(v?.label || "").trim();
+          const quoteOnly = !!v?.quoteOnly;
+          return id || label ? { id, label, quoteOnly } : null;
+        })
+        .filter(Boolean)
+        .slice(0, 12)
+    : [];
+
+  const optionsCatalog = Array.isArray(cfg?.options)
+    ? cfg.options
+        .map((o) => {
+          const id = String(o?.id || "").trim();
+          const label = String(o?.label || "").trim();
+          const type = String(o?.type || "").trim();
+          const amount = typeof o?.amount === "number" ? o.amount : null;
+          return id || label ? { id, label, type, amount } : null;
+        })
+        .filter(Boolean)
+        .slice(0, 20)
+    : [];
+
   const context = {
     pickup,
     dropoff,
@@ -348,6 +644,11 @@ function buildAiAssistantContext() {
     vehicle,
     currency: "EUR",
     options,
+    vehiclesCatalog,
+    optionsCatalog,
+    pricingBehavior: String(cfg?.pricingBehavior || "").trim() || undefined,
+    leadTimeThresholdMinutes:
+      typeof cfg?.leadTimeThresholdMinutes === "number" ? cfg.leadTimeThresholdMinutes : undefined,
     stopsCount: Array.isArray(trip?.stops) ? trip.stops.length : 0,
     customOption: String(trip?.customOptionText || "").trim(),
     quote: {
@@ -432,6 +733,7 @@ function initAiAssistantUI() {
       <div class="vtc-ai__actions">
         <button id="vtc-ai-copy-summary" class="vtc-ai__btn vtc-ai__btn--subtle" type="button">Copier résumé</button>
         <button id="vtc-ai-copy-reply" class="vtc-ai__btn vtc-ai__btn--subtle" type="button">Copier réponse</button>
+        <button id="vtc-ai-send-email" class="vtc-ai__btn" type="button">Envoyer par email</button>
         <a id="vtc-ai-whatsapp" class="vtc-ai__btn" href="#" target="_blank" rel="noopener noreferrer">WhatsApp</a>
       </div>
       <div class="vtc-ai__rgpd">
@@ -466,6 +768,10 @@ function initAiAssistantUI() {
   document.body.appendChild(fab);
   document.body.appendChild(modal);
 
+  // Apply premium theme colors (blue / black_gold) to the assistant UI.
+  // Retry because CSS variables may not be ready yet at first paint.
+  applyAiAssistantThemeWithRetry({ panel, fab, modal, widget, tries: 12 });
+
   // In mobile modal, we reuse the same panel node (move it).
   function openModal() {
     const mount = document.getElementById("vtc-ai-modal-mount");
@@ -499,9 +805,19 @@ function initAiAssistantUI() {
   const replyEl = panel.querySelector("#vtc-ai-reply");
   const copySummaryBtn = panel.querySelector("#vtc-ai-copy-summary");
   const copyReplyBtn = panel.querySelector("#vtc-ai-copy-reply");
+  const sendEmailBtn = panel.querySelector("#vtc-ai-send-email");
   const whatsappLink = panel.querySelector("#vtc-ai-whatsapp");
 
   let lastReply = "";
+  const chatHistory = [];
+
+  function pushHistory(role, content) {
+    const r = role === "assistant" ? "assistant" : "user";
+    const c = String(content || "").trim();
+    if (!c) return;
+    chatHistory.push({ role: r, content: c });
+    if (chatHistory.length > 12) chatHistory.splice(0, chatHistory.length - 12);
+  }
 
   function setStatus(text) {
     if (!statusEl) return;
@@ -530,6 +846,8 @@ function initAiAssistantUI() {
       setError("Écrivez un message pour l’assistant.");
       return;
     }
+
+    pushHistory("user", message);
 
     if (sendBtn) sendBtn.setAttribute("disabled", "disabled");
     setStatus("Analyse en cours…");
@@ -561,6 +879,12 @@ function initAiAssistantUI() {
         const err = String(json?.error || "Erreur serveur");
         if (res.status === 404 && err === "AI_DISABLED") {
           setError("Assistant indisponible (désactivé côté serveur).");
+        } else if (err === "OPENAI_NOT_CONFIGURED") {
+          setError("Assistant indisponible (configuration IA manquante)." );
+        } else if (err === "OPENAI_FAILED") {
+          setError("Assistant indisponible (erreur IA). Réessayez plus tard." );
+        } else if (err === "OPENAI_EMPTY") {
+          setError("Réponse vide. Réessayez." );
         } else if (res.status === 429) {
           const retry = typeof json?.retryAfterSeconds === "number" ? json.retryAfterSeconds : 30;
           setError(`Trop de demandes. Réessayez dans ${retry}s.`);
@@ -573,6 +897,7 @@ function initAiAssistantUI() {
 
       lastReply = String(json.reply || "").trim();
       setReply(lastReply);
+      pushHistory("assistant", lastReply);
       setStatus("");
       return;
     } catch (e) {
@@ -585,7 +910,77 @@ function initAiAssistantUI() {
     }
   }
 
+  async function sendLeadEmail() {
+    setError("");
+    setStatus("");
+
+    const bookingEmailTo = String(getWidgetDataset().bookingEmailTo || "").trim();
+    if (!bookingEmailTo) {
+      setError("Email destinataire non configuré dans le bloc (réglages du thème)." );
+      return;
+    }
+
+    const tripSummaryText = buildTripSummaryText();
+    if (!tripSummaryText && !chatHistory.length) {
+      setError("Renseignez d’abord un trajet ou posez une question à l’assistant.");
+      return;
+    }
+
+    if (sendEmailBtn) sendEmailBtn.setAttribute("disabled", "disabled");
+    setStatus("Envoi email en cours…");
+
+    try {
+      const payload = {
+        bookingEmailTo,
+        tripSummaryText,
+        messages: chatHistory,
+        sourceUrl: typeof window !== "undefined" && window.location ? window.location.href : undefined,
+        context: buildAiAssistantContext(),
+      };
+
+      const res = await fetch("/apps/vtc/api/ai-assistant-email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        credentials: "same-origin",
+        body: JSON.stringify(payload),
+      });
+
+      let json = null;
+      try {
+        json = await res.json();
+      } catch {
+        json = null;
+      }
+
+      if (!res.ok || !json?.ok) {
+        const err = String(json?.error || "Erreur serveur");
+        if (err === "EMAIL_NOT_CONFIGURED") {
+          setError("Email destinataire non configuré.");
+        } else {
+          setError("Envoi email impossible pour le moment.");
+        }
+        setStatus("");
+        return;
+      }
+
+      setStatus("Email envoyé. Nous vous recontactons rapidement.");
+      setTimeout(() => setStatus(""), 2800);
+      return;
+    } catch (e) {
+      console.error("ai-assistant-email: fetch failed", e);
+      setError("Connexion impossible. Vérifiez votre réseau.");
+      setStatus("");
+      return;
+    } finally {
+      if (sendEmailBtn) sendEmailBtn.removeAttribute("disabled");
+    }
+  }
+
   sendBtn?.addEventListener("click", () => sendMessage());
+  sendEmailBtn?.addEventListener("click", () => sendLeadEmail());
   input?.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();

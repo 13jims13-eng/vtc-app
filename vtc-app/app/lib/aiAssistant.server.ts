@@ -74,6 +74,35 @@ function pickContext(raw: unknown) {
     .filter(Boolean)
     .slice(0, 12);
 
+  const vehiclesCatalogRaw = Array.isArray(obj.vehiclesCatalog) ? obj.vehiclesCatalog : [];
+  const vehiclesCatalog = vehiclesCatalogRaw
+    .map((v) => {
+      const vv = v && typeof v === "object" ? (v as UnknownRecord) : null;
+      if (!vv) return null;
+      const id = clampString(vv.id, 48);
+      const label = clampString(vv.label, 80);
+      const quoteOnly = !!vv.quoteOnly;
+      if (!id && !label) return null;
+      return { id, label, quoteOnly };
+    })
+    .filter(Boolean)
+    .slice(0, 12);
+
+  const optionsCatalogRaw = Array.isArray(obj.optionsCatalog) ? obj.optionsCatalog : [];
+  const optionsCatalog = optionsCatalogRaw
+    .map((o) => {
+      const oo = o && typeof o === "object" ? (o as UnknownRecord) : null;
+      if (!oo) return null;
+      const id = clampString(oo.id, 64);
+      const label = clampString(oo.label, 100);
+      const type = clampString(oo.type, 24);
+      const amount = typeof oo.amount === "number" ? oo.amount : null;
+      if (!id && !label) return null;
+      return { id, label, type, amount };
+    })
+    .filter(Boolean)
+    .slice(0, 20);
+
   const quoteRaw = obj.quote && typeof obj.quote === "object" ? (obj.quote as UnknownRecord) : null;
   const quote = quoteRaw
     ? {
@@ -89,6 +118,13 @@ function pickContext(raw: unknown) {
   if (typeof stopsCount === "number") extra.stopsCount = stopsCount;
   const customOption = clampString(obj.customOption, 200);
   if (customOption) extra.customOption = customOption;
+
+  const pricingBehavior = clampString(obj.pricingBehavior, 32);
+  if (pricingBehavior) extra.pricingBehavior = pricingBehavior;
+  const leadTimeThresholdMinutes = typeof obj.leadTimeThresholdMinutes === "number" ? obj.leadTimeThresholdMinutes : null;
+  if (typeof leadTimeThresholdMinutes === "number") extra.leadTimeThresholdMinutes = leadTimeThresholdMinutes;
+  if (vehiclesCatalog.length) extra.vehiclesCatalog = vehiclesCatalog;
+  if (optionsCatalog.length) extra.optionsCatalog = optionsCatalog;
 
   return {
     pickup,
@@ -120,7 +156,7 @@ export function validateAiAssistantBody(raw: unknown) {
 
 export function buildSystemPrompt() {
   return [
-    "Tu es un assistant de réservation VTC premium, basé à Marseille.",
+    "Tu es l'assistant de réservation du site sur lequel tu es installé (VTC premium).",
     "Objectif: aider l'utilisateur à compléter sa demande et à réserver.",
     "Règles STRICTES:",
     "- Tu ne recalcules JAMAIS un prix. Tu ne modifies pas le devis.",
@@ -128,11 +164,95 @@ export function buildSystemPrompt() {
     "- Si le devis n'existe pas encore, tu demandes les informations manquantes et tu invites à cliquer sur 'Calculer les tarifs'.",
     "- Tu ne promets jamais la disponibilité ni un prix final garanti.",
     "- Tu respectes la confidentialité: ne demande pas de données inutiles.",
+    "- Tu NE PROPOSES JAMAIS d'autres chauffeurs, plateformes, comparateurs ou sites web. Tu restes 100% focalisé sur la réservation via CE site.",
+    "- Tu recommandes uniquement des véhicules/options présents dans le contexte (vehiclesCatalog/optionsCatalog). Si une demande ne correspond pas, tu proposes l'alternative la plus proche parmi la liste.",
+    "- Si l'utilisateur parle d'un vol/train, tu peux aider à préparer la réservation (marge, terminal/gare).",
+    "  - Si des infos web sont fournies dans 'webSearch', tu peux t'en servir pour confirmer l'horaire/retard.",
+    "  - Sinon, tu demandes le numéro de vol/train et l'horaire confirmé. N'invente pas.",
+    "Méthode (guide):",
+    "- Clarifie toujours: nb passagers, nb valises, besoin siège bébé/animal, adresse exacte + point de RDV (terminal/porte/quai), et marge souhaitée.",
+    "- Si aéroport/gare: demande terminal/gare + numéro de vol/train + heure d'arrivée; recommande une marge (ex: +30 à +60 min) selon cas.",
+    "- Si le client hésite: propose 1 véhicule recommandé (parmi vehiclesCatalog) + 1 alternative, et les options pertinentes (optionsCatalog).",
     "Sortie: format court en français, structuré en 3 sections exactement:",
     "1) Questions manquantes (liste courte)",
     "2) Récap devis (si quote) (liste courte)",
-    "3) Prochaine étape (CTA: Réserver / WhatsApp)",
+    "3) Prochaine étape (CTA: Calculer les tarifs / Envoyer par email / WhatsApp)",
   ].join("\n");
+}
+
+function hasSerperKey() {
+  return !!String(process.env.SERPER_API_KEY || "").trim();
+}
+
+function looksLikeScheduleQuestion(message: string) {
+  const m = message.toLowerCase();
+  return (
+    m.includes("vol") ||
+    m.includes("flight") ||
+    m.includes("train") ||
+    m.includes("tgv") ||
+    m.includes("sncf") ||
+    m.includes("gare") ||
+    m.includes("aéroport") ||
+    m.includes("airport") ||
+    m.includes("horaire") ||
+    m.includes("retard") ||
+    m.includes("arrivée") ||
+    m.includes("départ")
+  );
+}
+
+async function webSearchSerper(query: string) {
+  const apiKey = String(process.env.SERPER_API_KEY || "").trim();
+  if (!apiKey) return { ok: false as const, error: "SERPER_NOT_CONFIGURED" as const };
+
+  const q = query.trim();
+  if (!q) return { ok: false as const, error: "EMPTY_QUERY" as const };
+
+  const resp = await fetch("https://google.serper.dev/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-KEY": apiKey,
+    },
+    body: JSON.stringify({ q, num: 5 }),
+  });
+
+  const text = await resp.text().catch(() => "");
+  if (!resp.ok) {
+    return {
+      ok: false as const,
+      error: "SERPER_FAILED" as const,
+      status: resp.status,
+      detail: text ? text.slice(0, 400) : null,
+    };
+  }
+
+  const data = (() => {
+    try {
+      return text ? (JSON.parse(text) as UnknownRecord) : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const organic = Array.isArray(data?.organic) ? (data?.organic as UnknownRecord[]) : [];
+  const blockedWords = ["vtc", "chauffeur", "taxi", "uber", "bolt", "heetch", "cab", "driver"]; // avoid competitor suggestions
+
+  const results = organic
+    .map((r) => {
+      const title = typeof r.title === "string" ? r.title.trim() : "";
+      const link = typeof r.link === "string" ? r.link.trim() : "";
+      const snippet = typeof r.snippet === "string" ? r.snippet.trim() : "";
+      if (!title && !snippet) return null;
+      const hay = `${title} ${snippet} ${link}`.toLowerCase();
+      if (blockedWords.some((w) => hay.includes(w))) return null;
+      return { title, link, snippet };
+    })
+    .filter(Boolean)
+    .slice(0, 4);
+
+  return { ok: true as const, results };
 }
 
 export async function callOpenAi({
@@ -147,7 +267,22 @@ export async function callOpenAi({
     return { ok: false as const, error: "OPENAI_NOT_CONFIGURED" as const };
   }
 
-  const model = (process.env.OPENAI_MODEL || "").trim() || "gpt-4o-mini";
+  const model = (process.env.OPENAI_MODEL || "").trim() || "gpt-5-nano";
+
+  // Optional web search context for flight/train schedule questions.
+  // Only used when SERPER_API_KEY is configured.
+  let webSearch: unknown = null;
+  if (hasSerperKey() && looksLikeScheduleQuestion(userMessage)) {
+    try {
+      const web = await webSearchSerper(userMessage);
+      if (web.ok) {
+        // Avoid pushing too much content.
+        webSearch = web.results;
+      }
+    } catch {
+      webSearch = null;
+    }
+  }
 
   const body = {
     model,
@@ -158,7 +293,7 @@ export async function callOpenAi({
       {
         role: "user",
         content:
-          `Contexte (ne pas inventer):\n${JSON.stringify(context)}\n\nMessage utilisateur:\n${userMessage}`,
+          `Contexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\nMessage utilisateur:\n${userMessage}`,
       },
     ],
   };
