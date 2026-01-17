@@ -56,6 +56,13 @@ function clampString(value: unknown, maxLen: number) {
   return v.length > maxLen ? v.slice(0, maxLen) : v;
 }
 
+function parsePositiveIntEnv(value: unknown) {
+  if (typeof value !== "string") return null;
+  const n = Number.parseInt(value, 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
 function pickContext(raw: unknown) {
   const obj = (raw && typeof raw === "object" ? (raw as UnknownRecord) : {}) as UnknownRecord;
 
@@ -295,9 +302,13 @@ export async function callOpenAi({
   ];
 
   async function callChatCompletions() {
+    const defaultMaxCompletionTokens = modelLower.startsWith("gpt-5") || modelLower.startsWith("o1") ? 1500 : 520;
+    const maxTokensOverride = parsePositiveIntEnv(process.env.OPENAI_MAX_COMPLETION_TOKENS);
+    const maxCompletionTokens = maxTokensOverride ?? defaultMaxCompletionTokens;
+
     const tokenLimits =
       modelLower.startsWith("gpt-5") || modelLower.startsWith("o1")
-        ? { max_completion_tokens: 520 }
+        ? { max_completion_tokens: maxCompletionTokens }
         : { max_tokens: 520 };
     const tokenParam = Object.prototype.hasOwnProperty.call(tokenLimits, "max_completion_tokens")
       ? "max_completion_tokens"
