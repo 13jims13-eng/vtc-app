@@ -268,6 +268,7 @@ export async function callOpenAi({
   }
 
   const model = (process.env.OPENAI_MODEL || "").trim() || "gpt-5-nano";
+  const modelLower = model.toLowerCase();
 
   // Optional web search context for flight/train schedule questions.
   // Only used when SERPER_API_KEY is configured.
@@ -294,6 +295,11 @@ export async function callOpenAi({
   ];
 
   async function callChatCompletions() {
+    const tokenLimits =
+      modelLower.startsWith("gpt-5") || modelLower.startsWith("o1")
+        ? { max_completion_tokens: 520 }
+        : { max_tokens: 520 };
+
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -303,7 +309,7 @@ export async function callOpenAi({
       body: JSON.stringify({
         model,
         temperature: 0.25,
-        max_tokens: 520,
+        ...tokenLimits,
         messages,
       }),
     });
@@ -390,7 +396,7 @@ export async function callOpenAi({
   }
 
   // GPT-5 models may require the Responses API. Keep chat/completions for legacy models.
-  const useResponses = model.toLowerCase().startsWith("gpt-5");
+  const useResponses = modelLower.startsWith("gpt-5");
   const res = useResponses ? await callResponses() : await callChatCompletions();
   if (!res.ok) {
     return {
