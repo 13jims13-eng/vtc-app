@@ -275,6 +275,7 @@ export async function callOpenAi({
   }
 
   const model = (process.env.OPENAI_MODEL || "").trim() || "gpt-5-nano";
+  const fallbackModel = (process.env.OPENAI_FALLBACK_MODEL || "").trim() || "gpt-4o-mini";
   const modelLower = model.toLowerCase();
 
   // Optional web search context for flight/train schedule questions.
@@ -301,23 +302,22 @@ export async function callOpenAi({
     },
   ];
 
-  async function callChatCompletions() {
-    const defaultMaxCompletionTokens = modelLower.startsWith("gpt-5") || modelLower.startsWith("o1") ? 1500 : 520;
+  async function callChatCompletions(modelToUse: string) {
+    const ml = modelToUse.toLowerCase();
+
+    const defaultMaxCompletionTokens = ml.startsWith("gpt-5") || ml.startsWith("o1") ? 1500 : 520;
     const maxTokensOverride = parsePositiveIntEnv(process.env.OPENAI_MAX_COMPLETION_TOKENS);
     const maxCompletionTokens = maxTokensOverride ?? defaultMaxCompletionTokens;
 
     const tokenLimits =
-      modelLower.startsWith("gpt-5") || modelLower.startsWith("o1")
+      ml.startsWith("gpt-5") || ml.startsWith("o1")
         ? { max_completion_tokens: maxCompletionTokens }
         : { max_tokens: 520 };
     const tokenParam = Object.prototype.hasOwnProperty.call(tokenLimits, "max_completion_tokens")
       ? "max_completion_tokens"
       : "max_tokens";
 
-    const sampling =
-      modelLower.startsWith("gpt-5") || modelLower.startsWith("o1")
-        ? {}
-        : { temperature: 0.25 };
+    const sampling = ml.startsWith("gpt-5") || ml.startsWith("o1") ? {} : { temperature: 0.25 };
 
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -326,7 +326,7 @@ export async function callOpenAi({
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model,
+        model: modelToUse,
         ...sampling,
         ...tokenLimits,
         messages,
@@ -396,7 +396,7 @@ export async function callOpenAi({
         const msgKeys = msg ? Object.keys(msg).slice(0, 25) : [];
         const contentType = msg && "content" in msg ? (Array.isArray(msg.content) ? "array" : typeof msg.content) : "missing";
         const preview = text ? text.slice(0, 600) : null;
-        console.error("openai chat empty", { model, tokenParam, keys, msgKeys, contentType, preview });
+        console.error("openai chat empty", { model: modelToUse, tokenParam, keys, msgKeys, contentType, preview });
       } catch {
         // ignore
       }
@@ -405,7 +405,7 @@ export async function callOpenAi({
     return { ok: true as const, reply, api: "chat.completions" as const, tokenParam };
   }
 
-  async function callResponses() {
+  async function callResponses(modelToUse: string) {
     const input = `Contexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\nMessage utilisateur:\n${userMessage}`;
     const resp = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -414,7 +414,7 @@ export async function callOpenAi({
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model,
+        model: modelToUse,
         max_output_tokens: 520,
         instructions: buildSystemPrompt(),
         input,
@@ -485,7 +485,7 @@ export async function callOpenAi({
         const cType = content0 ? String(content0.type || "") : "";
         const textField = content0 ? (content0 as UnknownRecord).text : undefined;
         const textType = textField === null ? "null" : Array.isArray(textField) ? "array" : typeof textField;
-        console.error("openai responses empty", { model, keys, outType, cType, textType });
+        console.error("openai responses empty", { model: modelToUse, keys, outType, cType, textType });
       } catch {
         // ignore
       }
@@ -496,7 +496,7 @@ export async function callOpenAi({
 
   // Prefer chat/completions for broad compatibility. Enable Responses API explicitly if needed.
   const useResponses = parseBooleanEnv(process.env.OPENAI_USE_RESPONSES) && modelLower.startsWith("gpt-5");
-  const res = useResponses ? await callResponses() : await callChatCompletions();
+  const res = useResponses ? await callResponses(model) : await callChatCompletions(model);
   if (!res.ok) {
     return {
       ok: false as const,
@@ -511,6 +511,20 @@ export async function callOpenAi({
 
   const reply = res.reply.trim();
   if (!reply) {
+    // Some GPT-5 configs can consume all tokens in reasoning and produce no visible text.
+    // Fallback to a text-reliable model to keep the widget functional.
+    if (modelLower.startsWith("gpt-5") && fallbackModel && fallbackModel !== model) {
+      const retry = await callChatCompletions(fallbackModel);
+      if (retry.ok) {
+        const fb = retry.reply.trim();
+        if (fb) {
+          return { ok: true as const, reply: fb };
+        }
+      } else {
+        console.error("ai-assistant fallback failed", { prevModel: model, fallbackModel, status: retry.status, detail: retry.detail });
+      }
+    }
+
     return { ok: false as const, error: "OPENAI_EMPTY" as const };
   }
 
