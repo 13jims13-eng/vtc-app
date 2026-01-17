@@ -349,6 +349,7 @@ export async function callOpenAi({
   }
 
   async function callResponses() {
+    const input = `Contexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\nMessage utilisateur:\n${userMessage}`;
     const resp = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -359,7 +360,8 @@ export async function callOpenAi({
         model,
         temperature: 0.25,
         max_output_tokens: 520,
-        input: messages,
+        instructions: buildSystemPrompt(),
+        input,
       }),
     });
 
