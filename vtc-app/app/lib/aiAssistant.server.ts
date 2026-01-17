@@ -389,6 +389,13 @@ export async function callOpenAi({
       return { ok: true as const, reply: direct.trim(), api: "responses" as const, tokenParam: "max_output_tokens" as const };
     }
 
+    if (Array.isArray(direct)) {
+      const joined = direct.filter((x) => typeof x === "string").join("");
+      if (joined.trim()) {
+        return { ok: true as const, reply: joined.trim(), api: "responses" as const, tokenParam: "max_output_tokens" as const };
+      }
+    }
+
     // Fallback: attempt to extract text from output[].content[].text
     const output = Array.isArray(data?.output) ? (data?.output as UnknownRecord[]) : [];
     let combined = "";
@@ -396,7 +403,17 @@ export async function callOpenAi({
       const content = Array.isArray(item?.content) ? (item.content as UnknownRecord[]) : [];
       for (const c of content) {
         const textPart = c?.text;
-        if (typeof textPart === "string") combined += textPart;
+        if (typeof textPart === "string") {
+          combined += textPart;
+          continue;
+        }
+
+        if (textPart && typeof textPart === "object") {
+          const maybeValue = (textPart as UnknownRecord).value;
+          if (typeof maybeValue === "string") {
+            combined += maybeValue;
+          }
+        }
       }
     }
 
