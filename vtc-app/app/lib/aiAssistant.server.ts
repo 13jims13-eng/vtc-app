@@ -347,7 +347,32 @@ export async function callOpenAi({
       const first = choices[0] as UnknownRecord;
       const msg = first?.message && typeof first.message === "object" ? (first.message as UnknownRecord) : null;
       const c = msg?.content;
-      if (typeof c === "string") content = c;
+
+      if (typeof c === "string") {
+        content = c;
+      } else if (Array.isArray(c)) {
+        // Some models return structured content parts.
+        let combined = "";
+        for (const part of c) {
+          if (typeof part === "string") {
+            combined += part;
+            continue;
+          }
+          if (part && typeof part === "object") {
+            const p = part as UnknownRecord;
+            const t = p.text;
+            if (typeof t === "string") {
+              combined += t;
+              continue;
+            }
+            if (t && typeof t === "object") {
+              const v = (t as UnknownRecord).value;
+              if (typeof v === "string") combined += v;
+            }
+          }
+        }
+        content = combined;
+      }
     }
 
     return { ok: true as const, reply: content.trim(), api: "chat.completions" as const, tokenParam };
