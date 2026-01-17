@@ -284,57 +284,124 @@ export async function callOpenAi({
     }
   }
 
-  const body = {
-    model,
-    temperature: 0.25,
-    max_tokens: 520,
-    messages: [
-      { role: "system", content: buildSystemPrompt() },
-      {
-        role: "user",
-        content:
-          `Contexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\nMessage utilisateur:\n${userMessage}`,
-      },
-    ],
-  };
-
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+  const messages = [
+    { role: "system", content: buildSystemPrompt() },
+    {
+      role: "user",
+      content:
+        `Contexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\nMessage utilisateur:\n${userMessage}`,
     },
-    body: JSON.stringify(body),
-  });
+  ];
 
-  const text = await resp.text().catch(() => "");
-  if (!resp.ok) {
+  async function callChatCompletions() {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.25,
+        max_tokens: 520,
+        messages,
+      }),
+    });
+
+    const text = await resp.text().catch(() => "");
+    if (!resp.ok) {
+      return {
+        ok: false as const,
+        status: resp.status,
+        detail: text ? text.slice(0, 600) : null,
+      };
+    }
+
+    const data = (() => {
+      try {
+        return text ? (JSON.parse(text) as UnknownRecord) : null;
+      } catch {
+        return null;
+      }
+    })();
+
+    let content = "";
+    const choices = data?.choices;
+    if (Array.isArray(choices) && choices.length) {
+      const first = choices[0] as UnknownRecord;
+      const msg = first?.message && typeof first.message === "object" ? (first.message as UnknownRecord) : null;
+      const c = msg?.content;
+      if (typeof c === "string") content = c;
+    }
+
+    return { ok: true as const, reply: content.trim() };
+  }
+
+  async function callResponses() {
+    const resp = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.25,
+        max_output_tokens: 520,
+        input: messages,
+      }),
+    });
+
+    const text = await resp.text().catch(() => "");
+    if (!resp.ok) {
+      return {
+        ok: false as const,
+        status: resp.status,
+        detail: text ? text.slice(0, 600) : null,
+      };
+    }
+
+    const data = (() => {
+      try {
+        return text ? (JSON.parse(text) as UnknownRecord) : null;
+      } catch {
+        return null;
+      }
+    })();
+
+    // Prefer the aggregated field when available.
+    const direct = data?.output_text;
+    if (typeof direct === "string" && direct.trim()) {
+      return { ok: true as const, reply: direct.trim() };
+    }
+
+    // Fallback: attempt to extract text from output[].content[].text
+    const output = Array.isArray(data?.output) ? (data?.output as UnknownRecord[]) : [];
+    let combined = "";
+    for (const item of output) {
+      const content = Array.isArray(item?.content) ? (item.content as UnknownRecord[]) : [];
+      for (const c of content) {
+        const textPart = c?.text;
+        if (typeof textPart === "string") combined += textPart;
+      }
+    }
+
+    return { ok: true as const, reply: combined.trim() };
+  }
+
+  // GPT-5 models may require the Responses API. Keep chat/completions for legacy models.
+  const useResponses = model.toLowerCase().startsWith("gpt-5");
+  const res = useResponses ? await callResponses() : await callChatCompletions();
+  if (!res.ok) {
     return {
       ok: false as const,
       error: "OPENAI_FAILED" as const,
-      status: resp.status,
-      detail: text ? text.slice(0, 600) : null,
+      status: res.status,
+      detail: res.detail,
     };
   }
 
-  const data = (() => {
-    try {
-      return text ? (JSON.parse(text) as UnknownRecord) : null;
-    } catch {
-      return null;
-    }
-  })();
-
-  let content = "";
-  const choices = data?.choices;
-  if (Array.isArray(choices) && choices.length) {
-    const first = choices[0] as UnknownRecord;
-    const msg = first?.message && typeof first.message === "object" ? (first.message as UnknownRecord) : null;
-    const c = msg?.content;
-    if (typeof c === "string") content = c;
-  }
-
-  const reply = content.trim();
+  const reply = res.reply.trim();
   if (!reply) {
     return { ok: false as const, error: "OPENAI_EMPTY" as const };
   }
