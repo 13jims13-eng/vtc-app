@@ -417,7 +417,24 @@ export async function callOpenAi({
       }
     }
 
-    return { ok: true as const, reply: combined.trim(), api: "responses" as const, tokenParam: "max_output_tokens" as const };
+    const reply = combined.trim();
+    if (!reply) {
+      // Diagnostics for operators (Render logs). Do not include request content.
+      try {
+        const keys = data && typeof data === "object" ? Object.keys(data).slice(0, 25) : [];
+        const output0 = output[0] && typeof output[0] === "object" ? (output[0] as UnknownRecord) : null;
+        const outType = output0 ? String(output0.type || "") : "";
+        const content0 = output0 && Array.isArray(output0.content) ? (output0.content[0] as UnknownRecord) : null;
+        const cType = content0 ? String(content0.type || "") : "";
+        const textField = content0 ? (content0 as UnknownRecord).text : undefined;
+        const textType = textField === null ? "null" : Array.isArray(textField) ? "array" : typeof textField;
+        console.error("openai responses empty", { model, keys, outType, cType, textType });
+      } catch {
+        // ignore
+      }
+    }
+
+    return { ok: true as const, reply, api: "responses" as const, tokenParam: "max_output_tokens" as const };
   }
 
   // GPT-5 models may require the Responses API. Keep chat/completions for legacy models.
