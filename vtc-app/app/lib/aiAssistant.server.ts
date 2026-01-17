@@ -437,8 +437,8 @@ export async function callOpenAi({
     return { ok: true as const, reply, api: "responses" as const, tokenParam: "max_output_tokens" as const };
   }
 
-  // GPT-5 models may require the Responses API. Keep chat/completions for legacy models.
-  const useResponses = modelLower.startsWith("gpt-5");
+  // Prefer chat/completions for broad compatibility. Enable Responses API explicitly if needed.
+  const useResponses = parseBooleanEnv(process.env.OPENAI_USE_RESPONSES) && modelLower.startsWith("gpt-5");
   const res = useResponses ? await callResponses() : await callChatCompletions();
   if (!res.ok) {
     return {
