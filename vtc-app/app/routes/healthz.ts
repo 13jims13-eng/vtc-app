@@ -16,6 +16,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ok: true,
       service: "private-driver-book",
       now: new Date().toISOString(),
+      build: {
+        renderService: process.env.RENDER_SERVICE_NAME || null,
+        gitCommit: process.env.RENDER_GIT_COMMIT || null,
+        gitBranch: process.env.RENDER_GIT_BRANCH || null,
+      },
     },
     { status: 200 },
   );

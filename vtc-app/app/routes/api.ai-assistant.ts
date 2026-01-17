@@ -47,10 +47,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const res = await callOpenAi(validated.value);
   if (!res.ok) {
     // Log for operators (Render logs). Do not leak user content.
-    const maybe = res as unknown as { status?: unknown; detail?: unknown };
+    const maybe = res as unknown as { status?: unknown; detail?: unknown; model?: unknown; api?: unknown; tokenParam?: unknown };
     const openAiStatus = typeof maybe.status === "number" ? maybe.status : undefined;
     const detail = typeof maybe.detail === "string" ? maybe.detail.slice(0, 500) : null;
-    console.error("ai-assistant ko", { error: res.error, openAiStatus, detail });
+    const model = typeof maybe.model === "string" ? maybe.model : undefined;
+    const api = typeof maybe.api === "string" ? maybe.api : undefined;
+    const tokenParam = typeof maybe.tokenParam === "string" ? maybe.tokenParam : undefined;
+    console.error("ai-assistant ko", { error: res.error, openAiStatus, model, api, tokenParam, detail });
 
     // Do not leak request content; keep error minimal.
     const httpStatus = res.error === "OPENAI_NOT_CONFIGURED" ? 500 : 502;

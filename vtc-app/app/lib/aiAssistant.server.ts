@@ -299,6 +299,9 @@ export async function callOpenAi({
       modelLower.startsWith("gpt-5") || modelLower.startsWith("o1")
         ? { max_completion_tokens: 520 }
         : { max_tokens: 520 };
+    const tokenParam = Object.prototype.hasOwnProperty.call(tokenLimits, "max_completion_tokens")
+      ? "max_completion_tokens"
+      : "max_tokens";
 
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -320,6 +323,8 @@ export async function callOpenAi({
         ok: false as const,
         status: resp.status,
         detail: text ? text.slice(0, 600) : null,
+        api: "chat.completions" as const,
+        tokenParam,
       };
     }
 
@@ -340,7 +345,7 @@ export async function callOpenAi({
       if (typeof c === "string") content = c;
     }
 
-    return { ok: true as const, reply: content.trim() };
+    return { ok: true as const, reply: content.trim(), api: "chat.completions" as const, tokenParam };
   }
 
   async function callResponses() {
@@ -364,6 +369,8 @@ export async function callOpenAi({
         ok: false as const,
         status: resp.status,
         detail: text ? text.slice(0, 600) : null,
+        api: "responses" as const,
+        tokenParam: "max_output_tokens" as const,
       };
     }
 
@@ -378,7 +385,7 @@ export async function callOpenAi({
     // Prefer the aggregated field when available.
     const direct = data?.output_text;
     if (typeof direct === "string" && direct.trim()) {
-      return { ok: true as const, reply: direct.trim() };
+      return { ok: true as const, reply: direct.trim(), api: "responses" as const, tokenParam: "max_output_tokens" as const };
     }
 
     // Fallback: attempt to extract text from output[].content[].text
@@ -392,7 +399,7 @@ export async function callOpenAi({
       }
     }
 
-    return { ok: true as const, reply: combined.trim() };
+    return { ok: true as const, reply: combined.trim(), api: "responses" as const, tokenParam: "max_output_tokens" as const };
   }
 
   // GPT-5 models may require the Responses API. Keep chat/completions for legacy models.
@@ -404,6 +411,9 @@ export async function callOpenAi({
       error: "OPENAI_FAILED" as const,
       status: res.status,
       detail: res.detail,
+      model,
+      api: res.api,
+      tokenParam: res.tokenParam,
     };
   }
 

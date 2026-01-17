@@ -17,7 +17,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 
   return jsonResponse(
-    { ok: true, service: "vtc-app", now: new Date().toISOString() },
+    {
+      ok: true,
+      service: "vtc-app",
+      now: new Date().toISOString(),
+      build: {
+        renderService: process.env.RENDER_SERVICE_NAME || null,
+        gitCommit: process.env.RENDER_GIT_COMMIT || null,
+        gitBranch: process.env.RENDER_GIT_BRANCH || null,
+      },
+    },
     { status: 200 },
   );
 };
