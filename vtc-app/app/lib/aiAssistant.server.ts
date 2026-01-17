@@ -358,7 +358,6 @@ export async function callOpenAi({
       },
       body: JSON.stringify({
         model,
-        temperature: 0.25,
         max_output_tokens: 520,
         instructions: buildSystemPrompt(),
         input,
