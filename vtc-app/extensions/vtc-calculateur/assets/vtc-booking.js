@@ -668,6 +668,33 @@ function getPrivacyPolicyUrl() {
   return fromTheme || "/policies/privacy-policy";
 }
 
+function getAiAssistantMode() {
+  const dataset = getWidgetDataset();
+  const cfg = typeof getWidgetConfig === "function" ? getWidgetConfig() : null;
+
+  const raw = String(dataset.aiAssistantMode || cfg?.aiAssistantMode || "").trim().toLowerCase();
+  if (raw === "classic" || raw === "classique") return "classic";
+  if (raw === "ai" || raw === "ia") return "ai";
+  if (raw === "both" || raw === "les deux" || raw === "les_deux") return "both";
+  return "both";
+}
+
+function applyAssistantMode(mode) {
+  const m = mode || getAiAssistantMode();
+  const classic = document.getElementById("vtc-classic-ui");
+  if (classic) {
+    classic.style.display = m === "ai" ? "none" : "";
+  }
+
+  // If AI UI already exists (page nav cache), hide/show it.
+  const aiPanel = document.getElementById("vtc-ai-assistant");
+  if (aiPanel) {
+    aiPanel.style.display = m === "classic" ? "none" : "";
+  }
+
+  return m;
+}
+
 function buildAiAssistantContext() {
   const trip = window.lastTrip || null;
   const selectedOptions = getSelectedOptions ? getSelectedOptions() : [];
@@ -1494,7 +1521,7 @@ function initAiAssistantUI() {
         if (!vehicleId) return;
         const applied = applyAiFormUpdate({ vehicleId });
         if (applied?.changed) {
-          setStatus("Véhicule sélectionné dans le calculateur.");
+          setStatus("Véhicule sélectionné.");
           setTimeout(() => setStatus(""), 1800);
           try {
             scrollToAnchor("vtc-tariffs");
@@ -1585,7 +1612,7 @@ function initAiAssistantUI() {
         if (!vehicleId) return;
         const applied = applyAiFormUpdate({ vehicleId });
         if (applied?.changed) {
-          setStatus("Véhicule sélectionné dans le calculateur.");
+          setStatus("Véhicule sélectionné.");
           setTimeout(() => setStatus(""), 1800);
           try {
             scrollToAnchor("vtc-tariffs");
@@ -1828,10 +1855,18 @@ function initAiAssistantUI() {
 
     const wantsTariffs = /\b(tarif|tarifs|prix)\b/i.test(message);
 
-    // If the user explicitly asks for tariffs, try to compute them first (same as calculator)
-    // so the assistant can immediately show prices.
-    const preCtx = wantsTariffs ? await ensureVehicleQuotesReady({ timeoutMs: 9000 }) : null;
-    const contextBefore = preCtx || buildAiAssistantContext();
+    // Pre-compute tariffs when possible so the assistant can answer in 1 pass.
+    // - Explicit price intent: always precompute.
+    // - Implicit: if we already have pickup+dropoff+date+time, also precompute.
+    const ctxCandidate = buildAiAssistantContext();
+    const canTryQuotes =
+      !!String(ctxCandidate?.pickup || "").trim() &&
+      !!String(ctxCandidate?.dropoff || "").trim() &&
+      !!String(ctxCandidate?.date || "").trim() &&
+      !!String(ctxCandidate?.time || "").trim();
+
+    const preCtx = (wantsTariffs || canTryQuotes) ? await ensureVehicleQuotesReady({ timeoutMs: 9000 }) : null;
+    const contextBefore = preCtx || ctxCandidate;
     const hadDistanceBefore = typeof contextBefore?.quote?.distance === "number";
     const hadVehicleQuotesBefore = Array.isArray(contextBefore?.vehicleQuotes) && contextBefore.vehicleQuotes.length > 0;
 
@@ -1909,7 +1944,7 @@ function initAiAssistantUI() {
 
         const applied = applyAiFormUpdate(json.formUpdate);
         if (applied?.changed) {
-          setStatus(applied.triggered ? "Champs mis à jour, calcul en cours…" : "Champs mis à jour dans le calculateur." );
+          setStatus(applied.triggered ? "Champs mis à jour, calcul en cours…" : "Formulaire mis à jour." );
           setTimeout(() => setStatus(""), 2200);
         }
 
@@ -3873,7 +3908,11 @@ function renderTripSummaryFromLastTrip() {
 document.addEventListener("DOMContentLoaded", () => {
   renderVehiclesAndOptions();
   renderTripSummaryFromLastTrip();
-  initAiAssistantUI();
+
+  const mode = applyAssistantMode();
+  if (mode !== "classic") {
+    initAiAssistantUI();
+  }
 
   const customOptionInput = document.getElementById("customOption");
   if (customOptionInput) {

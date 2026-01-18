@@ -310,7 +310,8 @@ export function buildSystemPrompt() {
     "- Tu utilises uniquement les valeurs du contexte (quote, vehicleQuotes) si elles existent.",
     "- Confidentialité prix: tu ne révèles JAMAIS la base, le prix/km, les formules, ni les paramètres internes. Tu n'affiches que des totaux.",
     "- Quand tu annonces un tarif: dis toujours que c'est une estimation et que le chauffeur confirmera la demande et le tarif.",
-    "- Si le devis n'existe pas encore, tu demandes les informations manquantes et tu invites à cliquer sur 'Calculer les tarifs'.",
+    "- Si les tarifs ne sont pas encore disponibles (vehicleQuotes absent), tu demandes les informations manquantes pour pouvoir donner une estimation (départ, arrivée, date, heure, passagers, bagages, options).",
+    "- Tu ne mentionnes JAMAIS un calculateur, un bouton, ni une action du type “cliquez sur …”.",
     "- Si vehicleQuotes est présent, tu ANNONCES les tarifs calculés par véhicule dans 'recap' (sans recalcul).",
     "- Tu ne promets jamais la disponibilité ni un prix final garanti.",
     "- Tu respectes la confidentialité: ne demande pas de données inutiles.",
@@ -322,7 +323,7 @@ export function buildSystemPrompt() {
     "  - Demande le numéro de vol/train UNIQUEMENT si l'utilisateur veut vérifier un horaire/retard, ou s'il demande un suivi en temps réel.",
     "  - Si des infos web sont fournies dans 'webSearch', tu peux t'en servir pour confirmer un horaire/retard.",
     "- Langue: réponds naturellement dans la même langue que l'utilisateur (français, anglais, etc.).",
-    "- Si context.aiSecondPass === true et vehicleQuotes est présent, réponds directement avec les tarifs et la prochaine action (choisir véhicule / réserver), sans redemander de calcul.",
+    "- Si context.aiSecondPass === true et vehicleQuotes est présent, réponds directement avec les tarifs et la prochaine action (choisir véhicule / réserver).",
     "IMPORTANT: tu dois aussi proposer des mises à jour de formulaire (auto-remplissage) quand c'est possible.",
     "Tu renvoies UNIQUEMENT un JSON valide (pas de markdown, pas de texte autour).",
     "Schéma JSON attendu:",
@@ -1109,7 +1110,7 @@ function formatReplyFromModelJson(obj: UnknownRecord, context?: UnknownRecord): 
   lines.push(
     ...(nextStep.length
       ? nextStep.map((s) => `- ${s}`)
-      : ["- Remplissez le calculateur, cliquez sur 'Calculer les tarifs', choisissez un véhicule, puis cliquez sur 'Réserver'."]),
+      : ["- Donnez les informations manquantes pour obtenir une estimation, puis choisissez un véhicule et cliquez sur ‘Réserver’. "]),
   );
   return lines.join("\n").trim();
 }
@@ -1290,11 +1291,19 @@ export async function callOpenAi({
     .filter(Boolean)
     .slice(0, 20);
 
+  const hasOptionsCatalog = optionsCatalogLabels.length > 0;
+
   const inferredOptionsDecision = inferOptionsDecisionFromConversation({ userMessage, history, optionsCatalogLabels });
-  const effectiveOptionsDecision =
+  let effectiveOptionsDecision =
     typeof context.aiOptionsDecision === "string" && context.aiOptionsDecision.trim()
       ? context.aiOptionsDecision.trim()
       : inferredOptionsDecision;
+
+  // If there are no options configured for this tenant, treat it as "no options"
+  // so the assistant can move on quickly (pax/bags -> tariffs).
+  if (!effectiveOptionsDecision && !hasOptionsCatalog) {
+    effectiveOptionsDecision = "none";
+  }
 
   const selectedOptionIdsFromCtx = Array.isArray((context as UnknownRecord).selectedOptionIds)
     ? ((context as UnknownRecord).selectedOptionIds as unknown[])
@@ -1335,7 +1344,6 @@ export async function callOpenAi({
   }
 
   // Step 1: ask about options once (before asking passengers/bags).
-  const hasOptionsCatalog = optionsCatalogLabels.length > 0;
   const hasSelectedOptions =
     (Array.isArray(enrichedContextEarly.options) && (enrichedContextEarly.options as unknown[]).some((x) => typeof x === "string" && x.trim())) ||
     selectedOptionIdsFromCtx.length > 0;
@@ -1348,7 +1356,7 @@ export async function callOpenAi({
       ok: true as const,
       reply: [
         `Souhaitez-vous des options${ex}, ou aucune option ?`,
-        "Vous pouvez cocher des options dans le calculateur, ou répondre: “aucune option”.",
+        "Vous pouvez répondre par exemple: “aucune option” ou me dire l’option souhaitée.",
       ].join("\n"),
     };
   }
@@ -1414,7 +1422,7 @@ export async function callOpenAi({
       }
       lines.push("");
       lines.push("NB: Ces prix sont des estimations. Le chauffeur confirmera votre demande et le tarif.");
-      lines.push("Prochaine étape: choisissez le véhicule dans le calculateur puis cliquez sur ‘Réserver’." );
+      lines.push("Prochaine étape: choisissez le véhicule puis cliquez sur ‘Réserver’." );
       const suggestedVehicleIds = picks
         .slice(0, 3)
         .map((p) => clampString(p.id, 64))

@@ -1,5 +1,8 @@
 {% assign vtc_booking_email_to = block.settings.booking_email_to | strip %}
 
+{% assign assistant_mode = block.settings.assistant_mode | default: 'both' | strip %}
+{% if assistant_mode == blank %}{% assign assistant_mode = 'both' %}{% endif %}
+
 {% comment %}Vehicles JSON config (preferred by vtc-booking.js).{% endcomment %}
 {% assign display_mode = block.settings.display_mode | strip %}
 {% if display_mode == blank %}{% assign display_mode = 'A' %}{% endif %}
@@ -85,6 +88,7 @@
 
 {% capture widget_config_json %}
   {
+        "aiAssistantMode": {{ assistant_mode | json }},
     "displayMode": {{ display_mode | json }},
     "pricingBehavior": {{ pricing_behavior | json }},
     "leadTimeThresholdMinutes": {{ lead_time_threshold_minutes | json }},
@@ -106,6 +110,7 @@
 <div
     id="vtc-widget"
     class="vtc-widget vtc-widget--premium vtc-theme--{{ design_style }}"
+    data-ai-assistant-mode="{{ assistant_mode | escape }}"
     data-booking-email-to="{% if vtc_booking_email_to != blank %}{{ vtc_booking_email_to }}{% endif %}"
     data-google-maps-api-key="{{ block.settings.google_maps_api_key | escape }}"
     data-stop-fee="{{ block.settings.stop_fee }}"
@@ -119,8 +124,9 @@
     {% assign vtc_widget_title = block.settings.widget_title | strip %}
     {% if vtc_widget_title == blank %}{% assign vtc_widget_title = 'VTC Smart Booking' %}{% endif %}
 
-    <h2 class="vtc-title">{{ vtc_widget_title }}</h2>
-    <p class="vtc-subtitle">Obtenez une estimation instantanée de votre trajet.</p>
+    <div id="vtc-classic-ui" {% if assistant_mode == 'ai' %}style="display:none;"{% endif %}>
+        <h2 class="vtc-title">{{ vtc_widget_title }}</h2>
+        <p class="vtc-subtitle">Obtenez une estimation instantanée de votre trajet.</p>
 
     <!-- TYPE DE VÉHICULE -->
     <div class="vtc-section">
@@ -225,25 +231,27 @@
         <p id="consent-error" style="color:#c00;font-size:14px;margin-top:6px;"></p>
     </div>
 
-    <!-- PRIX + BOUTON RESERVER -->
-    <div id="vtc-reservation" style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;">
-        <p id="result" class="vtc-result" style="margin:0;"></p>
+        <!-- PRIX + BOUTON RESERVER -->
+        <div id="vtc-reservation" style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;">
+            <p id="result" class="vtc-result" style="margin:0;"></p>
 
-        <button type="button" id="reserve-btn"
-                disabled
-                style="
-                    padding:16px 26px;
-                    background:#000;
-                    color:white;
-                    border:none;
-                    border-radius:10px;
-                    font-size:16px;
-                    font-weight:600;
-                    opacity:0.45;
-                    cursor:not-allowed;
-                    transition:0.25s ease;">
-            Réserver mon trajet
-        </button>
+            <button type="button" id="reserve-btn"
+                    disabled
+                    style="
+                        padding:16px 26px;
+                        background:#000;
+                        color:white;
+                        border:none;
+                        border-radius:10px;
+                        font-size:16px;
+                        font-weight:600;
+                        opacity:0.45;
+                        cursor:not-allowed;
+                        transition:0.25s ease;">
+                Réserver mon trajet
+            </button>
+        </div>
+
     </div>
 
 </div>
@@ -280,6 +288,22 @@
                         { "value": "blue", "label": "Bleu (premium)" },
                         { "value": "black_gold", "label": "Noir / Doré" }
                     ]
+                },
+                {
+                    "type": "header",
+                    "content": "Assistant"
+                },
+                {
+                    "type": "select",
+                    "id": "assistant_mode",
+                    "label": "Affichage",
+                    "default": "both",
+                    "options": [
+                        { "value": "classic", "label": "Classique" },
+                        { "value": "ai", "label": "IA" },
+                        { "value": "both", "label": "Les deux" }
+                    ],
+                    "info": "Choisit si le visiteur voit le formulaire classique, l’assistant IA, ou les deux."
                 },
             {
                 "type": "select",
