@@ -426,7 +426,7 @@ function pickContext(raw: unknown) {
         return { id, label: label || id, baseFare, pricePerKm, quoteOnly };
       })
       .filter(Boolean)
-      .slice(0, 12);
+      .slice(0, 50);
 
     const optionsRaw2 = Array.isArray(pricingCfgRaw.options) ? (pricingCfgRaw.options as unknown[]) : [];
     const options2 = optionsRaw2
@@ -442,7 +442,7 @@ function pickContext(raw: unknown) {
         return { id, label: label || id, type, amount };
       })
       .filter(Boolean)
-      .slice(0, 20);
+      .slice(0, 50);
 
     extra.pricingConfig = {
       stopFee,
@@ -711,7 +711,7 @@ function sanitizePricingConfig(value: unknown): TenantPricingConfig | null {
   const vehicles: TenantPricingConfig["vehicles"] = [];
   const vehiclesRaw = Array.isArray(obj.vehicles) ? (obj.vehicles as unknown[]) : [];
   for (const v of vehiclesRaw) {
-    if (vehicles.length >= 12) break;
+    if (vehicles.length >= 50) break;
     const vv = v && typeof v === "object" ? (v as UnknownRecord) : null;
     if (!vv) continue;
     const id = clampString(vv.id, 64);
@@ -726,7 +726,7 @@ function sanitizePricingConfig(value: unknown): TenantPricingConfig | null {
   const options: TenantPricingConfig["options"] = [];
   const optionsRaw = Array.isArray(obj.options) ? (obj.options as unknown[]) : [];
   for (const o of optionsRaw) {
-    if (options.length >= 20) break;
+    if (options.length >= 50) break;
     const oo = o && typeof o === "object" ? (o as UnknownRecord) : null;
     if (!oo) continue;
     const id = clampString(oo.id, 64);
@@ -775,7 +775,7 @@ function formatVehicleQuotesBlock(context: UnknownRecord) {
       return "";
     })
     .filter(Boolean)
-    .slice(0, 12);
+    ;
 
   if (!rows.length) return "";
   return [
@@ -1061,7 +1061,17 @@ async function maybeEnrichContextWithVehicleQuotes({
     if (!pricingConfig || !pickup || !dropoff) return enrichedContext;
 
     const dir = await getDrivingKmAndMinutes({ origin: pickup, destination: dropoff });
-    if (!dir.ok) return enrichedContext;
+    if (!dir.ok) {
+      enrichedContext = {
+        ...context,
+        routeError: {
+          error: dir.error,
+          status: (dir as any).status,
+          detail: (dir as any).detail,
+        },
+      };
+      return enrichedContext;
+    }
 
     const vehicleQuotes = (pricingConfig.vehicles || [])
       .map((v) => {
@@ -1084,7 +1094,7 @@ async function maybeEnrichContextWithVehicleQuotes({
         };
       })
       .filter(Boolean)
-      .slice(0, 12);
+      ;
 
     enrichedContext = {
       ...context,
@@ -1621,6 +1631,33 @@ export async function callOpenAi({
     selectedOptionIds: selectedOptionIdsFromCtx,
   });
 
+  // If routing failed (unknown/ambiguous address), ask for clarification before anything else.
+  const routeErrorRaw = (enrichedContextEarly as UnknownRecord).routeError;
+  const hasQuotesEarly = Array.isArray((enrichedContextEarly as UnknownRecord).vehicleQuotes) && ((enrichedContextEarly as UnknownRecord).vehicleQuotes as unknown[]).length > 0;
+  if (routeErrorRaw && typeof routeErrorRaw === "object" && !hasQuotesEarly) {
+    const parsed: UnknownRecord = { questionsMissing: [], recap: [], nextStep: [] };
+    const routeError = routeErrorRaw as UnknownRecord;
+    ensureRouteClarification({
+      parsed,
+      routeError: {
+        error: String(routeError.error || "ROUTE_ERROR"),
+        status: routeError.status,
+      },
+      pickup,
+      dropoff,
+    });
+
+    const q = Array.isArray(parsed.questionsMissing) ? (parsed.questionsMissing as unknown[]) : [];
+    const first = q.find((x) => typeof x === "string" && x.trim());
+    const reply = String(first || "Je n’arrive pas à calculer l’itinéraire avec ces informations.").trim();
+
+    return {
+      ok: true as const,
+      reply,
+      formUpdate: Object.keys(extractedFormUpdate).length ? extractedFormUpdate : undefined,
+    };
+  }
+
   // If the widget explicitly requests a second pass (typically after triggering pricing),
   // answer deterministically with tariffs when we have them. This avoids relying on the model
   // to include prices in its prose.
@@ -1701,7 +1738,6 @@ export async function callOpenAi({
     const total = typeof qq.total === "number" && Number.isFinite(qq.total) ? qq.total : null;
     if (!id && !label) continue;
     vehicleQuotes.push({ id, label, isQuote, total });
-    if (vehicleQuotes.length >= 12) break;
   }
 
   if (optionsDecisionKnown && typeof passengers === "number" && passengers > 0 && vehicleQuotes.length) {
@@ -1727,6 +1763,12 @@ export async function callOpenAi({
         const price = typeof p.total === "number" ? `${p.total.toFixed(2)} ${currency}` : "sur devis";
         lines.push(`- ${p.label}: ${price}`);
       }
+
+      const tariffs = formatVehicleQuotesBlock(enrichedContextEarly);
+      if (tariffs) {
+        lines.push(tariffs.trim());
+      }
+
       lines.push("");
       lines.push("NB: Ces prix sont des estimations. Le chauffeur confirmera votre demande et le tarif.");
       lines.push("Prochaine étape: choisissez le véhicule puis passez à la réservation.");

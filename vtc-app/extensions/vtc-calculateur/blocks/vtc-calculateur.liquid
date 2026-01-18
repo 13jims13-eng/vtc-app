@@ -130,7 +130,8 @@
     {% assign vtc_widget_title = block.settings.widget_title | strip %}
     {% if vtc_widget_title == blank %}{% assign vtc_widget_title = 'VTC Smart Booking' %}{% endif %}
 
-    <div id="vtc-classic-ui" {% if assistant_mode == 'ai' %}style="display:none;"{% endif %}>
+    <div id="vtc-classic-ui">
+    <div id="vtc-calculator-panel">
         <h2 class="vtc-title">{{ vtc_widget_title }}</h2>
         <p class="vtc-subtitle">Obtenez une estimation instantanée de votre trajet.</p>
 
@@ -192,10 +193,14 @@
          style="width:100%;height:260px;margin-top:20px;border-radius:12px;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
     </div>
 
-        <!-- RÉSUMÉ TRAJET -->
-        <div id="vtc-summary"
-         style="display:none;margin-top:22px;background:#fafafa;padding:18px;border-radius:12px;border:1px solid #e5e5e5;font-family:'Inter',sans-serif;">
-    </div>
+           <!-- RÉSUMÉ TRAJET -->
+           <div id="vtc-summary"
+            style="display:none;margin-top:22px;background:#fafafa;padding:18px;border-radius:12px;border:1px solid #e5e5e5;font-family:'Inter',sans-serif;">
+        </div>
+
+        </div>
+
+        <div id="vtc-ai-mount"></div>
 
     <!-- FORMULAIRE COORDONNÉES VISIBLES (B1) -->
     <div id="contact-wrapper" class="vtc-contact" style="display:none;margin-top:22px;">

@@ -17,6 +17,7 @@ let _widgetConfigCache = null;
 let _googleMapsLoadPromise = null;
 let _googleMapsApiKeyResolvePromise = null;
 let _startGeoLatLng = null;
+let _endGeoLatLng = null;
 let _widgetState = {
   selectedVehicleId: null,
   selectedVehicleLabel: null,
@@ -710,8 +711,13 @@ function getAiAssistantMode() {
 function applyAssistantMode(mode) {
   const m = mode || getAiAssistantMode();
   const classic = document.getElementById("vtc-classic-ui");
-  if (classic) {
-    classic.style.display = m === "ai" ? "none" : "";
+
+  // In AI-only mode, keep the booking form (contact/policies/reservation) available.
+  // We hide only the calculator inputs/panels, not the whole classic container.
+  const calculatorPanel = document.getElementById("vtc-calculator-panel");
+  if (classic) classic.style.display = "";
+  if (calculatorPanel) {
+    calculatorPanel.style.display = m === "ai" ? "none" : "";
   }
 
   // If AI UI already exists (page nav cache), hide/show it.
@@ -721,11 +727,16 @@ function applyAssistantMode(mode) {
 
     // If the AI panel lives inside the classic container, it becomes invisible when classic UI is hidden.
     // In AI-only mode, ensure the panel is mounted outside of the hidden classic UI.
-    if (m === "ai" && classic && classic.contains(aiPanel) && classic.insertAdjacentElement) {
-      try {
-        classic.insertAdjacentElement("afterend", aiPanel);
-      } catch {
-        // ignore
+    // If the panel lives inside the hidden calculator panel, it would disappear.
+    // Prefer mounting inside the dedicated mount point.
+    if (m !== "classic") {
+      const mount = document.getElementById("vtc-ai-mount");
+      if (mount && aiPanel.parentNode !== mount) {
+        try {
+          mount.appendChild(aiPanel);
+        } catch {
+          // ignore
+        }
       }
     }
   }
@@ -761,7 +772,6 @@ function buildAiAssistantContext() {
           return id || label ? { id, label, quoteOnly } : null;
         })
         .filter(Boolean)
-        .slice(0, 12)
     : [];
 
   const optionsCatalog = Array.isArray(cfg?.options)
@@ -774,7 +784,6 @@ function buildAiAssistantContext() {
           return id || label ? { id, label, type, amount } : null;
         })
         .filter(Boolean)
-        .slice(0, 20)
     : [];
 
   const context = {
@@ -827,8 +836,7 @@ function buildAiAssistantContext() {
                 quoteOnly: !!v?.quoteOnly,
               };
             })
-            .filter(Boolean)
-            .slice(0, 12),
+            .filter(Boolean),
           options: (Array.isArray(cfg.options) ? cfg.options : [])
             .map((o) => {
               const id = String(o?.id || "").trim();
@@ -841,8 +849,7 @@ function buildAiAssistantContext() {
                 amount: typeof o?.amount === "number" ? o.amount : 0,
               };
             })
-            .filter(Boolean)
-            .slice(0, 20),
+            .filter(Boolean),
         }
       : undefined,
     aiOptionsAskedOnce: !!_widgetState.aiOptionsAskedOnce,
@@ -893,7 +900,7 @@ function buildAiAssistantContext() {
           };
         })
         .filter(Boolean)
-        .slice(0, 12);
+        ;
 
       if (vehicleQuotes.length) {
         context.vehicleQuotes = vehicleQuotes;
@@ -1113,13 +1120,16 @@ function initAiAssistantUI() {
 
   const mode = getAiAssistantMode();
   const classicRoot = document.getElementById("vtc-classic-ui");
+  const aiMount = document.getElementById("vtc-ai-mount");
   const summaryDiv = document.getElementById("vtc-summary");
 
-  // In AI-only mode, the classic container is hidden; mount the panel outside of it.
-  if (mode === "ai" && classicRoot && classicRoot.insertAdjacentElement) {
-    classicRoot.insertAdjacentElement("afterend", panel);
+  // Prefer the dedicated mount point (works for classic/both/ai-only).
+  if (aiMount) {
+    aiMount.appendChild(panel);
   } else if (summaryDiv && summaryDiv.insertAdjacentElement) {
     summaryDiv.insertAdjacentElement("afterend", panel);
+  } else if (classicRoot && classicRoot.insertAdjacentElement) {
+    classicRoot.insertAdjacentElement("afterend", panel);
   } else {
     widget.appendChild(panel);
   }
@@ -1138,13 +1148,20 @@ function initAiAssistantUI() {
   }
   function closeModal() {
     modal.classList.add("is-closed");
-    // Put it back under summary (desktop spot) so it exists in DOM when leaving mobile.
+    // Put it back to the desktop mount so it exists in DOM when leaving mobile.
+    const newAiMount = document.getElementById("vtc-ai-mount");
+    if (newAiMount) {
+      newAiMount.appendChild(panel);
+      return;
+    }
+
     const newSummaryDiv = document.getElementById("vtc-summary");
     if (newSummaryDiv && newSummaryDiv.insertAdjacentElement) {
       newSummaryDiv.insertAdjacentElement("afterend", panel);
-    } else {
-      widget.appendChild(panel);
+      return;
     }
+
+    widget.appendChild(panel);
   }
 
   fab.querySelector("#vtc-ai-fab-btn")?.addEventListener("click", () => openModal());
@@ -1422,6 +1439,85 @@ function initAiAssistantUI() {
     errorEl.textContent = v;
   }
 
+  async function selectVehicleFromAi(vehicleId) {
+    const vid = String(vehicleId || "").trim();
+    if (!vid) return;
+
+    setError("");
+    setStatus("");
+
+    // Ensure we have a computed trip (distance/time) before selecting.
+    const ctxReady = await ensureVehicleQuotesReady({ timeoutMs: 9000 });
+    if (!ctxReady || !window.lastTrip || typeof window.lastTrip.distanceKm !== "number") {
+      setError("Je n’arrive pas à calculer le trajet pour le moment. Merci de préciser les adresses (ville/code postal) et réessayer.");
+      return;
+    }
+
+    // Keep classic fields in sync.
+    try {
+      applyAiFormUpdate({ vehicleId: vid });
+    } catch {
+      // ignore
+    }
+
+    try {
+      const trip = window.lastTrip;
+      const pickupDate = String(trip.pickupDate || "").trim();
+      const pickupTime = String(trip.pickupTime || "").trim();
+      const leadTimeInfo = getLeadTimeInfo({ pickupDate, pickupTime });
+      const stopsCount = Array.isArray(trip.stops) ? trip.stops.length : 0;
+
+      const computed = computeTariffForVehicle({
+        km: trip.distanceKm,
+        stopsCount,
+        pickupTime,
+        pickupDate,
+        vehicleId: vid,
+        leadTimeInfo,
+      });
+
+      _widgetState.selectedVehicleId = computed.vehicleId;
+      _widgetState.selectedVehicleLabel = computed.vehicleLabel;
+      _widgetState.selectedIsQuote = !!computed.isQuote;
+      _widgetState.selectedTotal = computed.isQuote ? 0 : computed.total;
+
+      if (window.lastTrip) {
+        window.lastTrip.vehicle = computed.vehicleId;
+        window.lastTrip.vehicleLabel = computed.vehicleLabel;
+        window.lastTrip.isQuote = !!computed.isQuote;
+        window.lastTrip.pricingMode = computed.pricingMode || window.lastTrip.pricingMode || null;
+        window.lastTrip.surchargesApplied = computed.surchargesApplied || window.lastTrip.surchargesApplied || null;
+      }
+
+      if (computed.isQuote) {
+        clearPriceUI(true);
+        updateResultTariffDisplay({ isQuote: true, quoteMessage: computed.quoteMessage });
+        window.lastPrice = 0;
+      } else {
+        updateResultTariffDisplay({ isQuote: false, total: computed.total });
+        window.lastPrice = computed.total;
+      }
+
+      renderTripSummaryFromLastTrip();
+      applyOptionsDisplayMode("after_calc");
+      setReserveButtonEnabled(true);
+
+      const contactWrapper = document.getElementById("contact-wrapper");
+      if (contactWrapper) contactWrapper.style.display = "block";
+
+      setStatus("Véhicule sélectionné. Vous pouvez compléter vos coordonnées.");
+      setTimeout(() => setStatus(""), 2200);
+
+      try {
+        scrollToAnchor("vtc-reservation");
+      } catch {
+        // ignore
+      }
+    } catch {
+      setError("Impossible de sélectionner ce véhicule pour le moment.");
+    }
+  }
+
   function escapeHtml(text) {
     return String(text || "")
       .replace(/&/g, "&amp;")
@@ -1589,17 +1685,7 @@ function initAiAssistantUI() {
     suggestionsEl.querySelectorAll("button[data-ai-choose-vehicle]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const vehicleId = String(btn.getAttribute("data-ai-choose-vehicle") || "").trim();
-        if (!vehicleId) return;
-        const applied = applyAiFormUpdate({ vehicleId });
-        if (applied?.changed) {
-          setStatus("Véhicule sélectionné.");
-          setTimeout(() => setStatus(""), 1800);
-          try {
-            scrollToAnchor("vtc-tariffs");
-          } catch {
-            // ignore
-          }
-        }
+        selectVehicleFromAi(vehicleId);
       });
     });
   }
@@ -1633,7 +1719,7 @@ function initAiAssistantUI() {
     });
 
     const cards = [];
-    for (const q of ordered.slice(0, 12)) {
+    for (const q of ordered) {
       const id = String(q?.id || "").trim();
       if (!id) continue;
       const v = vehiclesById.get(id);
@@ -1680,17 +1766,7 @@ function initAiAssistantUI() {
     suggestionsEl.querySelectorAll("button[data-ai-choose-vehicle]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const vehicleId = String(btn.getAttribute("data-ai-choose-vehicle") || "").trim();
-        if (!vehicleId) return;
-        const applied = applyAiFormUpdate({ vehicleId });
-        if (applied?.changed) {
-          setStatus("Véhicule sélectionné.");
-          setTimeout(() => setStatus(""), 1800);
-          try {
-            scrollToAnchor("vtc-tariffs");
-          } catch {
-            // ignore
-          }
-        }
+        selectVehicleFromAi(vehicleId);
       });
     });
   }
@@ -2066,17 +2142,13 @@ function initAiAssistantUI() {
         }
       }
 
-      // If the user asked for tariffs, render all vehicle cards when possible.
-      if (wantsTariffs) {
-        try {
-          const ctxNow = buildAiAssistantContext();
-          const hasQuotesNow = Array.isArray(ctxNow?.vehicleQuotes) && ctxNow.vehicleQuotes.length > 0;
-          if (hasQuotesNow) {
-            setAiAllTariffsCards({ highlightIds: lastSuggestedVehicleIds });
-          }
-        } catch {
-          // ignore
-        }
+      // Always refresh tariff cards when quotes exist.
+      try {
+        const ctxNow = buildAiAssistantContext();
+        const hasQuotesNow = Array.isArray(ctxNow?.vehicleQuotes) && ctxNow.vehicleQuotes.length > 0;
+        if (hasQuotesNow) setAiAllTariffsCards({ highlightIds: lastSuggestedVehicleIds });
+      } catch {
+        // ignore
       }
 
       // Don't clear suggestions blindly: if we have computed tariffs we can still show cards.
