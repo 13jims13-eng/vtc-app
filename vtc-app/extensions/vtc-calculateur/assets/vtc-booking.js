@@ -461,6 +461,42 @@ function injectAiAssistantStylesOnce() {
     .vtc-ai__title { font-weight: 850; font-size: 15px; letter-spacing: -0.012em; }
     .vtc-ai__badge { font-size: 12.5px; line-height: 1.35; font-weight: 650; color: var(--vtc-ai-muted, rgba(17,24,39,.80)); }
     .vtc-ai__body { padding: 0 14px 14px 14px; }
+    .vtc-ai__suggestions { margin-top: 10px; }
+    .vtc-ai__suggestions h4 { font-size: 14px; font-weight: 850; letter-spacing: -0.01em; }
+
+    /* Fallback styles for tariff cards inside assistant */
+    .vtc-ai .vtc-tariffs-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    @media (min-width: 720px) {
+      .vtc-ai .vtc-tariffs-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .vtc-ai .vtc-tariff-card {
+      border: 1px solid var(--vtc-ai-border, rgba(0,0,0,.12));
+      border-radius: 14px;
+      padding: 10px;
+      background: color-mix(in srgb, var(--vtc-ai-surface, #fff) 92%, transparent);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .vtc-ai .vtc-tariff-left { display:flex; align-items:center; gap: 10px; min-width:0; }
+    .vtc-ai .vtc-tariff-image { width: 54px; height: 40px; object-fit: cover; border-radius: 10px; border: 1px solid rgba(0,0,0,.06); }
+    .vtc-ai .vtc-tariff-title { font-weight: 850; font-size: 13px; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
+    .vtc-ai .vtc-tariff-price { font-size: 13px; opacity: .92; }
+    .vtc-ai .vtc-tariff-select {
+      border-radius: 12px;
+      border: 1px solid color-mix(in srgb, var(--vtc-ai-border, rgba(0,0,0,.12)) 100%, transparent);
+      padding: 9px 10px;
+      background: var(--vtc-ai-btnBg, #111827);
+      color: var(--vtc-ai-btnText, #fff);
+      font-weight: 800;
+      cursor: pointer;
+      white-space: nowrap;
+    }
     .vtc-ai__row { display:flex; gap: 10px; align-items: flex-start; }
     .vtc-ai__input {
       width: 100%;
@@ -1038,6 +1074,87 @@ function initAiAssistantUI() {
   let lastReply = "";
   let lastSuggestedVehicleIds = [];
   const chatHistory = [];
+  // Restore previous conversation (same session) to avoid "restart at 0".
+  loadAiSession();
+  if (lastReply) {
+    try {
+      setReply(lastReply);
+    } catch {
+      // ignore
+    }
+  }
+  if (Array.isArray(lastSuggestedVehicleIds) && lastSuggestedVehicleIds.length) {
+    try {
+      setAiSuggestions(lastSuggestedVehicleIds);
+    } catch {
+      // ignore
+    }
+  }
+
+  // If tariffs already exist (user computed them), show cards immediately.
+  try {
+    const ctxInit = buildAiAssistantContext();
+    const hasQuotesInit = Array.isArray(ctxInit?.vehicleQuotes) && ctxInit.vehicleQuotes.length > 0;
+    if (hasQuotesInit) setAiAllTariffsCards({ highlightIds: lastSuggestedVehicleIds });
+  } catch {
+    // ignore
+  }
+
+  function pushHistory(role, content) {
+    const r = role === "assistant" ? "assistant" : role === "user" ? "user" : null;
+    const c = String(content || "").trim();
+    if (!r || !c) return;
+    chatHistory.push({ role: r, content: c });
+    while (chatHistory.length > 12) chatHistory.shift();
+    saveAiSession();
+  }
+
+  const aiStorageKeyBase = (() => {
+    try {
+      const p = typeof window !== "undefined" && window.location ? String(window.location.pathname || "") : "";
+      return `vtc_ai_v1:${p || "default"}`;
+    } catch {
+      return "vtc_ai_v1:default";
+    }
+  })();
+
+  function loadAiSession() {
+    try {
+      const raw = sessionStorage.getItem(`${aiStorageKeyBase}:state`);
+      if (!raw) return;
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === "object") {
+        const hist = Array.isArray(obj.history) ? obj.history : [];
+        chatHistory.length = 0;
+        hist
+          .filter((h) => h && typeof h === "object")
+          .slice(-12)
+          .forEach((h) => {
+            const role = h.role === "assistant" ? "assistant" : h.role === "user" ? "user" : null;
+            const content = typeof h.content === "string" ? h.content : "";
+            if (role && content) chatHistory.push({ role, content });
+          });
+
+        lastReply = typeof obj.lastReply === "string" ? obj.lastReply : "";
+        lastSuggestedVehicleIds = Array.isArray(obj.lastSuggestedVehicleIds) ? obj.lastSuggestedVehicleIds.slice(0, 3) : [];
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  function saveAiSession() {
+    try {
+      const payload = {
+        history: Array.isArray(chatHistory) ? chatHistory.slice(-12) : [],
+        lastReply: String(lastReply || "").slice(0, 6000),
+        lastSuggestedVehicleIds: Array.isArray(lastSuggestedVehicleIds) ? lastSuggestedVehicleIds.slice(0, 3) : [],
+      };
+      sessionStorage.setItem(`${aiStorageKeyBase}:state`, JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+  }
 
   function extractAiSection(text, sectionPrefix) {
     const raw = String(text || "").trim();
@@ -1297,6 +1414,9 @@ function initAiAssistantUI() {
     const v = String(text || "").trim();
     replyEl.style.display = v ? "block" : "none";
     replyEl.innerHTML = v ? renderReplyHtml(v) : "";
+
+    lastReply = v;
+    saveAiSession();
   }
 
   function setAiSuggestions(ids) {
@@ -1717,7 +1837,7 @@ function initAiAssistantUI() {
 
     const body = {
       userMessage: message,
-      context: contextBefore,
+      context: wantsTariffs && preCtx ? { ...contextBefore, aiSecondPass: true } : contextBefore,
       history: Array.isArray(chatHistory) ? chatHistory.slice(-12) : [],
     };
 
@@ -1782,6 +1902,7 @@ function initAiAssistantUI() {
           const ids = Array.isArray(json.formUpdate?.suggestedVehicleIds) ? json.formUpdate.suggestedVehicleIds : [];
           lastSuggestedVehicleIds = Array.isArray(ids) ? ids.slice(0, 3) : [];
           setAiSuggestions(lastSuggestedVehicleIds);
+          saveAiSession();
         } catch {
           // ignore
         }
@@ -1852,10 +1973,17 @@ function initAiAssistantUI() {
         }
       }
 
-      // If no suggestions were provided, clear the suggestions UI.
-      if (!json?.formUpdate?.suggestedVehicleIds) {
-        lastSuggestedVehicleIds = [];
-        setAiSuggestions([]);
+      // Don't clear suggestions blindly: if we have computed tariffs we can still show cards.
+      try {
+        const ctxNow = buildAiAssistantContext();
+        const hasQuotesNow = Array.isArray(ctxNow?.vehicleQuotes) && ctxNow.vehicleQuotes.length > 0;
+        if (!hasQuotesNow && !json?.formUpdate?.suggestedVehicleIds) {
+          lastSuggestedVehicleIds = [];
+          setAiSuggestions([]);
+          saveAiSession();
+        }
+      } catch {
+        // ignore
       }
 
       // Restore input UX after reply.
