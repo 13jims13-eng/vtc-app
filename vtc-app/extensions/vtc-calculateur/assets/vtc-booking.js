@@ -27,6 +27,7 @@ let _widgetState = {
   aiOptionsDecision: "", // "none" | "some" | ""
   aiPassengersCount: null,
   aiBagsCount: null,
+  aiCountsAskedOnce: false,
 };
 
 function setCustomOptionText(value) {
@@ -691,6 +692,7 @@ function buildAiAssistantContext() {
       typeof _widgetState.aiBagsCount === "number" && Number.isFinite(_widgetState.aiBagsCount)
         ? _widgetState.aiBagsCount
         : undefined,
+    aiCountsAskedOnce: !!_widgetState.aiCountsAskedOnce,
     vehiclesCatalog,
     optionsCatalog,
     // Full pricing config (non-sensitive) to allow deterministic server-side quoting
@@ -1564,6 +1566,9 @@ function initAiAssistantUI() {
         const t = String(lastReply || "").toLowerCase();
         if (t.includes("souhaitez-vous") && t.includes("option")) {
           _widgetState.aiOptionsAskedOnce = true;
+        }
+        if ((t.includes("combien") && t.includes("passager")) || (t.includes("combien") && (t.includes("bagage") || t.includes("valise")))) {
+          _widgetState.aiCountsAskedOnce = true;
         }
       } catch {
         // ignore

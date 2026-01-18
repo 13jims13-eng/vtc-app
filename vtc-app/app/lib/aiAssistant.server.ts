@@ -112,6 +112,15 @@ function pickContext(raw: unknown) {
     .filter(Boolean)
     .slice(0, 12);
 
+  const selectedOptionIdsRaw = Array.isArray(obj.selectedOptionIds) ? obj.selectedOptionIds : [];
+  const selectedOptionIds = selectedOptionIdsRaw
+    .map((x) => clampString(x, 64))
+    .filter(Boolean)
+    .slice(0, 12);
+
+  const passengersCount = typeof obj.passengersCount === "number" && Number.isFinite(obj.passengersCount) ? obj.passengersCount : null;
+  const bagsCount = typeof obj.bagsCount === "number" && Number.isFinite(obj.bagsCount) ? obj.bagsCount : null;
+
   const vehiclesCatalogRaw = Array.isArray(obj.vehiclesCatalog) ? obj.vehiclesCatalog : [];
   const vehiclesCatalog = vehiclesCatalogRaw
     .map((v) => {
@@ -162,6 +171,8 @@ function pickContext(raw: unknown) {
   const aiOptionsDecision = clampString(obj.aiOptionsDecision, 24);
   if (aiOptionsDecision) extra.aiOptionsDecision = aiOptionsDecision;
 
+  if (typeof obj.aiCountsAskedOnce === "boolean") extra.aiCountsAskedOnce = obj.aiCountsAskedOnce;
+
   // Internal client hint: allow a second AI pass after the calculator computed vehicleQuotes.
   if (typeof obj.aiSecondPass === "boolean") extra.aiSecondPass = obj.aiSecondPass;
 
@@ -171,6 +182,10 @@ function pickContext(raw: unknown) {
   if (typeof leadTimeThresholdMinutes === "number") extra.leadTimeThresholdMinutes = leadTimeThresholdMinutes;
   if (vehiclesCatalog.length) extra.vehiclesCatalog = vehiclesCatalog;
   if (optionsCatalog.length) extra.optionsCatalog = optionsCatalog;
+
+  if (selectedOptionIds.length) extra.selectedOptionIds = selectedOptionIds;
+  if (typeof passengersCount === "number" && passengersCount > 0 && passengersCount < 50) extra.passengersCount = passengersCount;
+  if (typeof bagsCount === "number" && bagsCount >= 0 && bagsCount < 50) extra.bagsCount = bagsCount;
 
   // Per-vehicle totals computed by the calculator (not by the AI).
   const vehicleQuotesRaw = Array.isArray(obj.vehicleQuotes) ? (obj.vehicleQuotes as unknown[]) : [];
@@ -653,10 +668,30 @@ function extractCountsFromConversation({ userMessage, history }: { userMessage: 
         .map((m) => Number(m[1]))
         .filter((n) => Number.isFinite(n))
         .slice(0, 4);
+
+      const wordMap: Record<string, number> = {
+        un: 1,
+        une: 1,
+        deux: 2,
+        trois: 3,
+        quatre: 4,
+        cinq: 5,
+        six: 6,
+        sept: 7,
+        huit: 8,
+        neuf: 9,
+        dix: 10,
+      };
+      const wordNums = Array.from(msg.toLowerCase().matchAll(/\b(un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\b/g))
+        .map((m) => wordMap[m[1]] ?? null)
+        .filter((n): n is number => typeof n === "number" && Number.isFinite(n))
+        .slice(0, 4);
+
+      const seq = nums.length >= 2 ? nums : wordNums;
       // Accept patterns like "2 3" or "2/3" meaning pax/bags.
-      if (nums.length >= 2) {
-        if (passengers === null && nums[0] > 0) passengers = nums[0];
-        if (bags === null && nums[1] >= 0) bags = nums[1];
+      if (seq.length >= 2) {
+        if (passengers === null && seq[0] > 0) passengers = seq[0];
+        if (bags === null && seq[1] >= 0) bags = seq[1];
       }
     }
   }
@@ -1299,6 +1334,20 @@ export async function callOpenAi({
   const passengers = typeof fromCtxPassengers === "number" && Number.isFinite(fromCtxPassengers) && fromCtxPassengers > 0 ? fromCtxPassengers : extracted.passengers;
   const bags = typeof fromCtxBags === "number" && Number.isFinite(fromCtxBags) && fromCtxBags >= 0 ? fromCtxBags : extracted.bags;
   if (optionsDecisionKnown && (passengers === null || bags === null)) {
+    const alreadyAsked = typeof (enrichedContextEarly as UnknownRecord).aiCountsAskedOnce === "boolean" ? !!(enrichedContextEarly as UnknownRecord).aiCountsAskedOnce : false;
+    if (alreadyAsked) {
+      return {
+        ok: true as const,
+        reply: [
+          "Je n’arrive pas à lire votre réponse.",
+          "Merci de répondre exactement au format :",
+          "- Passagers : X",
+          "- Bagages : Y",
+          "Exemples : ‘Passagers : 2, Bagages : 3’ ou ‘2/3’.",
+        ].join("\n"),
+      };
+    }
+
     const parts = [];
     if (passengers === null) parts.push("Combien de passagers (pax) ?");
     if (bags === null) parts.push("Combien de bagages/valises ?");
@@ -1307,6 +1356,7 @@ export async function callOpenAi({
       reply: [
         "Pour vous conseiller le bon véhicule (1 à 2 choix), j’ai besoin de :",
         ...parts.map((p) => `- ${p}`),
+        "(Astuce: vous pouvez répondre ‘2/3’ pour 2 passagers et 3 bagages.)",
       ].join("\n"),
     };
   }
