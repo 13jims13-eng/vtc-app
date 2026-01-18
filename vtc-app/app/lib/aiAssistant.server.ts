@@ -140,6 +140,9 @@ function pickContext(raw: unknown) {
   const aiOptionsDecision = clampString(obj.aiOptionsDecision, 24);
   if (aiOptionsDecision) extra.aiOptionsDecision = aiOptionsDecision;
 
+  // Internal client hint: allow a second AI pass after the calculator computed vehicleQuotes.
+  if (typeof obj.aiSecondPass === "boolean") extra.aiSecondPass = obj.aiSecondPass;
+
   const pricingBehavior = clampString(obj.pricingBehavior, 32);
   if (pricingBehavior) extra.pricingBehavior = pricingBehavior;
   const leadTimeThresholdMinutes = typeof obj.leadTimeThresholdMinutes === "number" ? obj.leadTimeThresholdMinutes : null;
@@ -210,10 +213,13 @@ export function buildSystemPrompt() {
     "  - IMPORTANT: le numéro de vol/train est OPTIONNEL. Ne bloque jamais la réservation dessus.",
     "  - Demande le numéro de vol/train UNIQUEMENT si l'utilisateur veut vérifier un horaire/retard, ou s'il demande un suivi en temps réel.",
     "  - Si des infos web sont fournies dans 'webSearch', tu peux t'en servir pour confirmer un horaire/retard.",
+    "- Langue: réponds naturellement dans la même langue que l'utilisateur (français, anglais, etc.).",
+    "- Si context.aiSecondPass === true et vehicleQuotes est présent, réponds directement avec les tarifs et la prochaine action (choisir véhicule / réserver), sans redemander de calcul.",
     "IMPORTANT: tu dois aussi proposer des mises à jour de formulaire (auto-remplissage) quand c'est possible.",
     "Tu renvoies UNIQUEMENT un JSON valide (pas de markdown, pas de texte autour).",
     "Schéma JSON attendu:",
     "{",
+    '  "answer"?: string,',
     '  "questionsMissing": string[],',
     '  "recap": string[],',
     '  "nextStep": string[],',
@@ -402,6 +408,10 @@ function sanitizeFormUpdate(value: unknown, ctx: UnknownRecord): AiAssistantForm
 }
 
 function formatReplyFromModelJson(obj: UnknownRecord): string {
+  // Prefer a natural-language answer if provided.
+  const answer = typeof obj.answer === "string" ? obj.answer.trim() : "";
+  if (answer) return answer;
+
   const q = Array.isArray(obj.questionsMissing) ? obj.questionsMissing : [];
   const r = Array.isArray(obj.recap) ? obj.recap : [];
   const n = Array.isArray(obj.nextStep) ? obj.nextStep : [];

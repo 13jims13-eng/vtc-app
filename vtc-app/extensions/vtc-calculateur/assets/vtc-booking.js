@@ -501,6 +501,7 @@ function injectAiAssistantStylesOnce() {
       min-width: 44px;
       width: 44px;
     }
+    .vtc-ai__btn--icon svg { width: 18px; height: 18px; display:block; }
     .vtc-ai__btn--listening {
       border-color: color-mix(in srgb, var(--vtc-ai-accent, #111827) 60%, transparent);
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--vtc-ai-accent, #111827) 18%, transparent);
@@ -781,15 +782,17 @@ function initAiAssistantUI() {
     <div class="vtc-ai__body">
       <div class="vtc-ai__row">
         <textarea id="vtc-ai-input" class="vtc-ai__input" placeholder="Ex: Je suis 2 adultes + 2 valises, quel véhicule me conseillez-vous ?"></textarea>
-        <button id="vtc-ai-mic" class="vtc-ai__btn vtc-ai__btn--subtle vtc-ai__btn--icon" type="button" title="Dicter un message">Mic</button>
+        <button id="vtc-ai-mic" class="vtc-ai__btn vtc-ai__btn--subtle vtc-ai__btn--icon" type="button" title="Dicter un message" aria-label="Dicter un message">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/>
+          </svg>
+        </button>
         <button id="vtc-ai-send" class="vtc-ai__btn" type="button">Envoyer</button>
       </div>
       <div id="vtc-ai-status" class="vtc-ai__status" style="display:none;"></div>
       <div id="vtc-ai-error" class="vtc-ai__error" style="display:none;"></div>
       <div id="vtc-ai-reply" class="vtc-ai__reply" style="display:none;"></div>
       <div class="vtc-ai__actions">
-        <button id="vtc-ai-copy-summary" class="vtc-ai__btn vtc-ai__btn--subtle" type="button">Copier résumé</button>
-        <button id="vtc-ai-copy-reply" class="vtc-ai__btn vtc-ai__btn--subtle" type="button">Copier réponse</button>
         <button id="vtc-ai-send-email" class="vtc-ai__btn" type="button">Envoyer par email</button>
         <a id="vtc-ai-whatsapp" class="vtc-ai__btn" href="#" target="_blank" rel="noopener noreferrer">WhatsApp</a>
       </div>
@@ -861,8 +864,6 @@ function initAiAssistantUI() {
   const statusEl = panel.querySelector("#vtc-ai-status");
   const errorEl = panel.querySelector("#vtc-ai-error");
   const replyEl = panel.querySelector("#vtc-ai-reply");
-  const copySummaryBtn = panel.querySelector("#vtc-ai-copy-summary");
-  const copyReplyBtn = panel.querySelector("#vtc-ai-copy-reply");
   const sendEmailBtn = panel.querySelector("#vtc-ai-send-email");
   const whatsappLink = panel.querySelector("#vtc-ai-whatsapp");
 
@@ -918,7 +919,9 @@ function initAiAssistantUI() {
     isListening = !!listening;
     if (!micBtn) return;
     micBtn.classList.toggle("vtc-ai__btn--listening", isListening);
-    micBtn.textContent = isListening ? "Stop" : "Mic";
+    micBtn.innerHTML = isListening
+      ? '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6 6h12v12H6z"/></svg>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>';
   }
 
   function ensureRecognition() {
@@ -927,7 +930,8 @@ function initAiAssistantUI() {
     try {
       recognition = new SpeechRecognition();
       recognition.lang = "fr-FR";
-      recognition.continuous = false;
+      // Longer recording: keep listening until user stops (browser-dependent).
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
 
@@ -1230,9 +1234,13 @@ function initAiAssistantUI() {
     if (sendBtn) sendBtn.setAttribute("disabled", "disabled");
     setStatus("Message enregistré. Analyse en cours…");
 
+    const contextBefore = buildAiAssistantContext();
+    const hadDistanceBefore = typeof contextBefore?.quote?.distance === "number";
+    const hadVehicleQuotesBefore = Array.isArray(contextBefore?.vehicleQuotes) && contextBefore.vehicleQuotes.length > 0;
+
     const body = {
       userMessage: message,
-      context: buildAiAssistantContext(),
+      context: contextBefore,
     };
 
     let json = null;
@@ -1283,6 +1291,44 @@ function initAiAssistantUI() {
         if (applied?.changed) {
           setStatus(applied.triggered ? "Champs mis à jour, calcul en cours…" : "Champs mis à jour dans le calculateur." );
           setTimeout(() => setStatus(""), 2200);
+        }
+
+        // If the calculator was not filled/ready before, do a 2nd AI pass AFTER we have vehicleQuotes.
+        // This makes the assistant able to give tariffs even when the user didn't fill the calculator.
+        const needsSecondPass = applied.triggered && !hadDistanceBefore && !hadVehicleQuotesBefore;
+        if (needsSecondPass) {
+          setStatus("Tarifs en cours de calcul…");
+
+          const waitForQuotes = async () => {
+            const started = Date.now();
+            while (Date.now() - started < 8000) {
+              const ctxNow = buildAiAssistantContext();
+              const hasQuotes = Array.isArray(ctxNow?.vehicleQuotes) && ctxNow.vehicleQuotes.length > 0;
+              if (hasQuotes) return ctxNow;
+              await new Promise((r) => setTimeout(r, 250));
+            }
+            return null;
+          };
+
+          const ctxAfter = await waitForQuotes();
+          if (ctxAfter) {
+            try {
+              const res2 = await fetch("/apps/vtc/api/ai-assistant", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Accept: "application/json" },
+                credentials: "same-origin",
+                body: JSON.stringify({ userMessage: message, context: { ...ctxAfter, aiSecondPass: true } }),
+              });
+              const json2 = await res2.json().catch(() => null);
+              if (res2.ok && json2?.ok && typeof json2.reply === "string") {
+                lastReply = String(json2.reply || "").trim();
+                setReply(lastReply);
+                pushHistory("assistant", lastReply);
+              }
+            } catch {
+              // ignore
+            }
+          }
         }
       }
 
@@ -1450,26 +1496,25 @@ function initAiAssistantUI() {
       return;
     }
     whatsappLink.setAttribute("href", url);
+
+        // Safety timeout: stop after ~60s to avoid endless sessions (browser-dependent).
+        try {
+          window.setTimeout(() => {
+            try {
+              if (recognition && isListening) recognition.stop();
+            } catch {
+              // ignore
+            }
+          }, 60000);
+        } catch {
+          // ignore
+        }
     window.open(url, "_blank", "noopener,noreferrer");
   });
 }
 
 function getCustomOptionTextFromUI() {
   const raw = document.getElementById("customOption")?.value || "";
-  return String(raw).trim();
-}
-
-function setCustomOptionText(value) {
-  _widgetState.customOptionText = String(value || "").trim();
-  if (window.lastTrip) {
-    window.lastTrip.customOptionText = _widgetState.customOptionText;
-  }
-}
-
-function normalizeTimeTo5Minutes(value) {
-  const v = String(value || "").trim();
-  if (!v) return "";
-  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(v);
   if (!m) return v;
   const hh = Number(m[1]);
   const mm = Number(m[2]);
