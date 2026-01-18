@@ -1634,6 +1634,23 @@ export async function callOpenAi({
   // If routing failed (unknown/ambiguous address), ask for clarification before anything else.
   const routeErrorRaw = (enrichedContextEarly as UnknownRecord).routeError;
   const hasQuotesEarly = Array.isArray((enrichedContextEarly as UnknownRecord).vehicleQuotes) && ((enrichedContextEarly as UnknownRecord).vehicleQuotes as unknown[]).length > 0;
+  const vehicleQuotesForClient = (() => {
+    const raw = Array.isArray((enrichedContextEarly as UnknownRecord).vehicleQuotes) ? ((enrichedContextEarly as UnknownRecord).vehicleQuotes as unknown[]) : [];
+    if (!raw.length) return undefined;
+    const out: { id: string; label: string; isQuote: boolean; total: number | null }[] = [];
+    for (const q of raw) {
+      const qq = q && typeof q === "object" ? (q as UnknownRecord) : null;
+      if (!qq) continue;
+      const id = clampString(qq.id, 64);
+      const label = clampString(qq.label, 80) || id;
+      const isQuote = !!qq.isQuote;
+      const total = typeof qq.total === "number" && Number.isFinite(qq.total) ? qq.total : null;
+      if (!id && !label) continue;
+      out.push({ id: id || label, label: label || id, isQuote, total });
+      if (out.length >= 50) break;
+    }
+    return out.length ? out : undefined;
+  })();
   if (routeErrorRaw && typeof routeErrorRaw === "object" && !hasQuotesEarly) {
     const parsed: UnknownRecord = { questionsMissing: [], recap: [], nextStep: [] };
     const routeError = routeErrorRaw as UnknownRecord;
@@ -1670,6 +1687,7 @@ export async function callOpenAi({
       return {
         ok: true as const,
         reply: [intro, tariffs.trim(), "", "Pour continuer, choisissez un véhicule puis passez à la réservation."].join("\n"),
+        vehicleQuotes: vehicleQuotesForClient,
       };
     }
   }
@@ -1779,6 +1797,7 @@ export async function callOpenAi({
       return {
         ok: true as const,
         reply: lines.join("\n"),
+        vehicleQuotes: vehicleQuotesForClient,
         formUpdate: suggestedVehicleIds.length ? ({ suggestedVehicleIds } as AiAssistantFormUpdate) : undefined,
       };
     }

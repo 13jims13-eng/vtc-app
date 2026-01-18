@@ -24,6 +24,7 @@ let _widgetState = {
   selectedIsQuote: false,
   selectedTotal: null,
   customOptionText: "",
+  aiVehicleQuotesOverride: null,
   aiOptionsAskedOnce: false,
   aiOptionsDecision: "", // "none" | "some" | ""
   aiPassengersCount: null,
@@ -904,6 +905,36 @@ function buildAiAssistantContext() {
 
       if (vehicleQuotes.length) {
         context.vehicleQuotes = vehicleQuotes;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // If the server computed quotes (before client-side Directions), reuse them for display.
+  try {
+    const existing = Array.isArray(context.vehicleQuotes) ? context.vehicleQuotes : [];
+    const override = Array.isArray(_widgetState.aiVehicleQuotesOverride) ? _widgetState.aiVehicleQuotesOverride : [];
+    if (override.length) {
+      if (!existing.length) {
+        context.vehicleQuotes = override;
+      } else {
+        // Merge totals by id when client computed partial data.
+        const byId = new Map(override.map((q) => [String(q?.id || "").trim(), q]));
+        const merged = existing.map((q) => {
+          const id = String(q?.id || "").trim();
+          const o = id ? byId.get(id) : null;
+          if (!o) return q;
+          const total = typeof q?.total === "number" ? q.total : null;
+          const oTotal = typeof o?.total === "number" ? o.total : null;
+          return {
+            ...q,
+            total: total !== null ? total : oTotal,
+            isQuote: typeof q?.isQuote === "boolean" ? q.isQuote : !!o?.isQuote,
+            label: String(q?.label || "").trim() || String(o?.label || "").trim(),
+          };
+        });
+        context.vehicleQuotes = merged;
       }
     }
   } catch {
@@ -2064,6 +2095,15 @@ function initAiAssistantUI() {
       lastReply = String(json.reply || "").trim();
       setReply(lastReply);
       pushHistory("assistant", lastReply);
+
+      // If the server returns computed quotes, keep them for card display.
+      try {
+        if (Array.isArray(json?.vehicleQuotes) && json.vehicleQuotes.length) {
+          _widgetState.aiVehicleQuotesOverride = json.vehicleQuotes.slice(0, 50);
+        }
+      } catch {
+        // ignore
+      }
 
       // Mark that we already asked about options if the assistant prompts for it.
       try {
