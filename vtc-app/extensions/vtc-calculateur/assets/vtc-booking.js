@@ -395,13 +395,39 @@ function applyAiAssistantThemeVars(targetEl, widget) {
   if (resolvedAccent2) targetEl.style.setProperty("--vtc-ai-accent2", resolvedAccent2);
   if (resolvedBorder) targetEl.style.setProperty("--vtc-ai-border", resolvedBorder);
 
-  // Readability fix: the calculator can be "dark" while cards are "light" (or vice-versa).
-  // Force the assistant panel to use a light surface + dark text for consistent readability.
-  targetEl.style.setProperty("--vtc-ai-surface", "rgba(255,255,255,.96)");
-  targetEl.style.setProperty("--vtc-ai-surface2", "rgba(17,24,39,.04)");
-  targetEl.style.setProperty("--vtc-ai-text", "#111827");
-  targetEl.style.setProperty("--vtc-ai-muted", "rgba(17,24,39,.78)");
-  targetEl.style.setProperty("--vtc-ai-subtle", "rgba(17,24,39,.58)");
+  // Match the storefront theme: dark themes should not render a large white assistant panel.
+  const isDarkTheme =
+    (widget.classList &&
+      (widget.classList.contains("vtc-theme--black_gold") || widget.classList.contains("vtc-theme--blue"))) ||
+    (!!fallback && !!fallback.text && String(fallback.text).includes("255"));
+
+  if (isDarkTheme) {
+    // Dark surface + light text (better contrast on dark hero sections).
+    targetEl.style.setProperty(
+      "--vtc-ai-surface",
+      resolvedCard || "rgba(10, 12, 16, 0.88)"
+    );
+    targetEl.style.setProperty(
+      "--vtc-ai-surface2",
+      resolvedCard2 || "rgba(255, 255, 255, 0.06)"
+    );
+    targetEl.style.setProperty("--vtc-ai-text", "rgba(255, 255, 255, 0.92)");
+    targetEl.style.setProperty("--vtc-ai-muted", "rgba(255, 255, 255, 0.74)");
+    targetEl.style.setProperty("--vtc-ai-subtle", "rgba(255, 255, 255, 0.56)");
+    targetEl.style.setProperty("--vtc-ai-inputBg", "rgba(0, 0, 0, 0.28)");
+    targetEl.style.setProperty("--vtc-ai-inputBorder", "rgba(255, 255, 255, 0.16)");
+    targetEl.style.setProperty("--vtc-ai-backdrop", "rgba(0,0,0,.62)");
+  } else {
+    // Light surface + dark text.
+    targetEl.style.setProperty("--vtc-ai-surface", "rgba(255,255,255,.96)");
+    targetEl.style.setProperty("--vtc-ai-surface2", "rgba(17,24,39,.04)");
+    targetEl.style.setProperty("--vtc-ai-text", "#111827");
+    targetEl.style.setProperty("--vtc-ai-muted", "rgba(17,24,39,.78)");
+    targetEl.style.setProperty("--vtc-ai-subtle", "rgba(17,24,39,.58)");
+    targetEl.style.setProperty("--vtc-ai-inputBg", "rgba(255,255,255,.92)");
+    targetEl.style.setProperty("--vtc-ai-inputBorder", "rgba(17,24,39,.22)");
+    targetEl.style.setProperty("--vtc-ai-backdrop", "rgba(0,0,0,.55)");
+  }
 
   if (resolvedDanger) targetEl.style.setProperty("--vtc-ai-danger", resolvedDanger);
   if (resolvedRadius) targetEl.style.setProperty("--vtc-ai-radius", resolvedRadius);
@@ -414,10 +440,6 @@ function applyAiAssistantThemeVars(targetEl, widget) {
     );
     targetEl.style.setProperty("--vtc-ai-btnText", pickTextOnColor(resolvedAccent));
   }
-  // Inputs should be clearly readable on light surface.
-  targetEl.style.setProperty("--vtc-ai-inputBg", "rgba(255,255,255,.92)");
-  targetEl.style.setProperty("--vtc-ai-inputBorder", "rgba(17,24,39,.22)");
-  targetEl.style.setProperty("--vtc-ai-backdrop", "rgba(0,0,0,.55)");
 }
 
 function applyAiAssistantThemeWithRetry({ panel, fab, modal, widget, tries = 10 }) {
@@ -456,6 +478,8 @@ function injectAiAssistantStylesOnce() {
       overflow: hidden;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+      box-shadow: 0 16px 46px rgba(0,0,0,.18);
+      backdrop-filter: blur(10px);
     }
     .vtc-ai__header { display:flex; align-items:center; justify-content:space-between; padding: 12px 14px; gap: 10px; }
     .vtc-ai__title { font-weight: 850; font-size: 15px; letter-spacing: -0.012em; }
@@ -473,6 +497,9 @@ function injectAiAssistantStylesOnce() {
     @media (min-width: 720px) {
       .vtc-ai .vtc-tariffs-grid { grid-template-columns: 1fr 1fr; }
     }
+    @media (min-width: 1060px) {
+      .vtc-ai .vtc-tariffs-grid { grid-template-columns: 1fr 1fr 1fr; }
+    }
     .vtc-ai .vtc-tariff-card {
       border: 1px solid var(--vtc-ai-border, rgba(0,0,0,.12));
       border-radius: 14px;
@@ -486,7 +513,7 @@ function injectAiAssistantStylesOnce() {
     .vtc-ai .vtc-tariff-left { display:flex; align-items:center; gap: 10px; min-width:0; }
     .vtc-ai .vtc-tariff-image { width: 54px; height: 40px; object-fit: cover; border-radius: 10px; border: 1px solid rgba(0,0,0,.06); }
     .vtc-ai .vtc-tariff-title { font-weight: 850; font-size: 13px; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
-    .vtc-ai .vtc-tariff-price { font-size: 13px; opacity: .92; }
+    .vtc-ai .vtc-tariff-price { font-size: 13px; font-weight: 800; color: var(--vtc-ai-muted, rgba(17,24,39,.80)); }
     .vtc-ai .vtc-tariff-select {
       border-radius: 12px;
       border: 1px solid color-mix(in srgb, var(--vtc-ai-border, rgba(0,0,0,.12)) 100%, transparent);
