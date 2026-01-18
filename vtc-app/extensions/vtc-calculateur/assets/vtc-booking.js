@@ -79,8 +79,12 @@ function resolveGoogleMapsApiKey() {
     return fromThemeRaw;
   })();
 
-  // Prefer server-provided key (App Proxy) so we can use an env-managed key.
-  // Fall back to the theme key only if server is unavailable/not configured.
+  // For Places Autocomplete (address suggestions), the key must have Places enabled.
+  // In practice, many shops configure the key in the theme settings. Since this key is
+  // not considered secret, we prefer the theme key for the front-end.
+  if (themeKey) return Promise.resolve(themeKey);
+
+  // Otherwise, fall back to a server-provided key (App Proxy) if configured.
   if (_googleMapsApiKeyResolvePromise) {
     return _googleMapsApiKeyResolvePromise.then((k) => k || themeKey);
   }

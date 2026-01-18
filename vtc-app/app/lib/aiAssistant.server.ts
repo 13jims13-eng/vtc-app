@@ -1008,6 +1008,47 @@ export async function callOpenAi({
   context: UnknownRecord;
   history?: { role: "user" | "assistant"; content: string }[];
 }) {
+  const msgLower = String(userMessage || "").toLowerCase();
+  const asksForPricingMethod = (() => {
+    const m = msgLower;
+    if (!m) return false;
+    const hasPriceIntent =
+      m.includes("tarif") ||
+      m.includes("prix") ||
+      m.includes("coût") ||
+      m.includes("cout") ||
+      m.includes("factur") ||
+      m.includes("calcul");
+    if (!hasPriceIntent) return false;
+
+    return (
+      m.includes("comment") && (m.includes("calcul") || m.includes("détermin") || m.includes("determin"))
+    ) ||
+      m.includes("comment est calcul") ||
+      m.includes("comment c'est calcul") ||
+      m.includes("mode de calcul") ||
+      m.includes("formule") ||
+      m.includes("détail") ||
+      m.includes("detail") ||
+      m.includes("base") ||
+      m.includes("prix/km") ||
+      m.includes("prix au km") ||
+      m.includes("€/km") ||
+      m.includes("eur/km");
+  })();
+
+  if (asksForPricingMethod) {
+    return {
+      ok: true as const,
+      reply: [
+        "Je ne peux pas détailler la méthode de calcul (base, €/km, formules) sur le site.",
+        "Je peux en revanche vous donner une estimation du total et vous aider à réserver.",
+        "NB: Les prix affichés sont des estimations. Le chauffeur confirmera votre demande et le tarif.",
+        "Prochaine étape: utilisez le bouton ‘Réserver’ ou ‘Envoyer par email/WhatsApp’ pour être recontacté rapidement.",
+      ].join("\n"),
+    };
+  }
+
   const apiKey = (process.env.OPENAI_API_KEY || "").trim();
   if (!apiKey) {
     return { ok: false as const, error: "OPENAI_NOT_CONFIGURED" as const };
