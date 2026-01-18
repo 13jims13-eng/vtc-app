@@ -60,5 +60,5 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return jsonResponse({ ok: false, error: res.error }, { status: httpStatus });
   }
 
-  return jsonResponse({ ok: true, reply: res.reply });
+  return jsonResponse({ ok: true, reply: res.reply, formUpdate: "formUpdate" in res ? res.formUpdate : undefined });
 };

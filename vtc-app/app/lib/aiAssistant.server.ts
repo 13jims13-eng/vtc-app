@@ -1,5 +1,14 @@
 type UnknownRecord = Record<string, unknown>;
 
+export type AiAssistantFormUpdate = {
+  pickup?: string;
+  dropoff?: string;
+  pickupDate?: string;
+  pickupTime?: string;
+  vehicleId?: string;
+  optionIds?: string[];
+};
+
 export type AiAssistantRequestBody = {
   context: UnknownRecord;
   userMessage: string;
@@ -126,12 +135,34 @@ function pickContext(raw: unknown) {
   const customOption = clampString(obj.customOption, 200);
   if (customOption) extra.customOption = customOption;
 
+  // Widget-side assistant memory flags (safe, non-sensitive).
+  if (typeof obj.aiOptionsAskedOnce === "boolean") extra.aiOptionsAskedOnce = obj.aiOptionsAskedOnce;
+  const aiOptionsDecision = clampString(obj.aiOptionsDecision, 24);
+  if (aiOptionsDecision) extra.aiOptionsDecision = aiOptionsDecision;
+
   const pricingBehavior = clampString(obj.pricingBehavior, 32);
   if (pricingBehavior) extra.pricingBehavior = pricingBehavior;
   const leadTimeThresholdMinutes = typeof obj.leadTimeThresholdMinutes === "number" ? obj.leadTimeThresholdMinutes : null;
   if (typeof leadTimeThresholdMinutes === "number") extra.leadTimeThresholdMinutes = leadTimeThresholdMinutes;
   if (vehiclesCatalog.length) extra.vehiclesCatalog = vehiclesCatalog;
   if (optionsCatalog.length) extra.optionsCatalog = optionsCatalog;
+
+  // Per-vehicle totals computed by the calculator (not by the AI).
+  const vehicleQuotesRaw = Array.isArray(obj.vehicleQuotes) ? (obj.vehicleQuotes as unknown[]) : [];
+  const vehicleQuotes = vehicleQuotesRaw
+    .map((q) => {
+      const qq = q && typeof q === "object" ? (q as UnknownRecord) : null;
+      if (!qq) return null;
+      const id = clampString(qq.id, 64);
+      const label = clampString(qq.label, 80);
+      const isQuote = !!qq.isQuote;
+      const total = typeof qq.total === "number" && Number.isFinite(qq.total) ? qq.total : null;
+      if (!id && !label) return null;
+      return { id, label, isQuote, total };
+    })
+    .filter(Boolean)
+    .slice(0, 12);
+  if (vehicleQuotes.length) extra.vehicleQuotes = vehicleQuotes;
 
   return {
     pickup,
@@ -167,24 +198,321 @@ export function buildSystemPrompt() {
     "Objectif: aider l'utilisateur à compléter sa demande et à réserver.",
     "Règles STRICTES:",
     "- Tu ne recalcules JAMAIS un prix. Tu ne modifies pas le devis.",
-    "- Tu utilises uniquement les valeurs du contexte (quote) si elles existent.",
+    "- Tu utilises uniquement les valeurs du contexte (quote, vehicleQuotes) si elles existent.",
     "- Si le devis n'existe pas encore, tu demandes les informations manquantes et tu invites à cliquer sur 'Calculer les tarifs'.",
+    "- Si vehicleQuotes est présent, tu ANNONCES les tarifs calculés par véhicule dans 'recap' (sans recalcul).",
     "- Tu ne promets jamais la disponibilité ni un prix final garanti.",
     "- Tu respectes la confidentialité: ne demande pas de données inutiles.",
-    "- Tu NE PROPOSES JAMAIS d'autres chauffeurs, plateformes, comparateurs ou sites web. Tu restes 100% focalisé sur la réservation via CE site.",
-    "- Tu recommandes uniquement des véhicules/options présents dans le contexte (vehiclesCatalog/optionsCatalog). Si une demande ne correspond pas, tu proposes l'alternative la plus proche parmi la liste.",
+    "- Tu NE PROPOSES JAMAIS d'autres chauffeurs, plateformes, comparateurs ou sites web.",
+    "- Tu recommandes uniquement des véhicules/options présents dans le contexte (vehiclesCatalog/optionsCatalog).",
+    "- Si optionsCatalog n'est pas vide et que le client n'a pas exprimé de préférence, demande: options ou aucune option.",
     "- Si l'utilisateur parle d'un vol/train, tu peux aider à préparer la réservation (marge, terminal/gare).",
-    "  - Si des infos web sont fournies dans 'webSearch', tu peux t'en servir pour confirmer l'horaire/retard.",
-    "  - Sinon, tu demandes le numéro de vol/train et l'horaire confirmé. N'invente pas.",
-    "Méthode (guide):",
-    "- Clarifie toujours: nb passagers, nb valises, besoin siège bébé/animal, adresse exacte + point de RDV (terminal/porte/quai), et marge souhaitée.",
-    "- Si aéroport/gare: demande terminal/gare + numéro de vol/train + heure d'arrivée; recommande une marge (ex: +30 à +60 min) selon cas.",
-    "- Si le client hésite: propose 1 véhicule recommandé (parmi vehiclesCatalog) + 1 alternative, et les options pertinentes (optionsCatalog).",
-    "Sortie: format court en français, structuré en 3 sections exactement:",
-    "1) Questions manquantes (liste courte)",
-    "2) Récap devis (si quote) (liste courte)",
-    "3) Prochaine étape (CTA: Calculer les tarifs / Envoyer par email / WhatsApp)",
+    "  - IMPORTANT: le numéro de vol/train est OPTIONNEL. Ne bloque jamais la réservation dessus.",
+    "  - Demande le numéro de vol/train UNIQUEMENT si l'utilisateur veut vérifier un horaire/retard, ou s'il demande un suivi en temps réel.",
+    "  - Si des infos web sont fournies dans 'webSearch', tu peux t'en servir pour confirmer un horaire/retard.",
+    "IMPORTANT: tu dois aussi proposer des mises à jour de formulaire (auto-remplissage) quand c'est possible.",
+    "Tu renvoies UNIQUEMENT un JSON valide (pas de markdown, pas de texte autour).",
+    "Schéma JSON attendu:",
+    "{",
+    '  "questionsMissing": string[],',
+    '  "recap": string[],',
+    '  "nextStep": string[],',
+    '  "formUpdate": {',
+    '    "pickup"?: string,',
+    '    "dropoff"?: string,',
+    '    "pickupDate"?: "YYYY-MM-DD",',
+    '    "pickupTime"?: "HH:mm",',
+    '    "vehicleId"?: string,',
+    '    "optionIds"?: string[]',
+    "  }",
+    "}",
+    "Contraintes formUpdate:",
+    "- Ne mets un champ QUE si l'utilisateur l'a fourni clairement.",
+    "- pickupDate/pickupTime doivent respecter les formats indiqués.",
+    "- vehicleId doit correspondre à un id dans vehiclesCatalog (sinon omet).",
+    "- optionIds doit contenir uniquement des ids présents dans optionsCatalog.",
+    "  - Si le client ne veut AUCUNE option (ex: 'pas d'options'), tu peux mettre optionIds: [] pour indiquer 'aucune option'.",
+    "  - Sinon, si tu n'es pas sûr, n'inclus pas optionIds.",
+    "- Ne mets jamais de prix dans formUpdate.",
+    "Rappels: réponses courtes, en français, orientées action.",
   ].join("\n");
+}
+
+function relaxTransportQuestions({ parsed, userMessage }: { parsed: UnknownRecord; userMessage: string }) {
+  const q = Array.isArray(parsed.questionsMissing) ? (parsed.questionsMissing as unknown[]) : null;
+  if (!q) return;
+
+  const msg = userMessage.toLowerCase();
+  const scheduleIntent =
+    msg.includes("retard") ||
+    msg.includes("en retard") ||
+    msg.includes("horaire") ||
+    msg.includes("statut") ||
+    msg.includes("status") ||
+    msg.includes("sur internet") ||
+    msg.includes("suivi") ||
+    msg.includes("tracker") ||
+    msg.includes("vérifi") ||
+    msg.includes("verifi") ||
+    msg.includes("chercher") ||
+    msg.includes("recherche");
+
+  const noNumber =
+    msg.includes("pas de num") || msg.includes("pas de numéro") || msg.includes("sans num") || msg.includes("sans numéro");
+
+  const timesInMessage = Array.from(msg.matchAll(/\b(\d{1,2}h\d{0,2})\b/g))
+    .map((m) => String(m[1] || "").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  const filtered = q
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean)
+    .filter((question) => {
+      const t = question.toLowerCase();
+
+      // If the user isn't asking for a schedule check, don't insist on flight/train numbers.
+      const asksForNumber =
+        t.includes("numéro de vol") ||
+        t.includes("num vol") ||
+        t.includes("numéro du vol") ||
+        t.includes("numéro de train") ||
+        t.includes("num train") ||
+        t.includes("numéro du train");
+
+      if (asksForNumber && (!scheduleIntent || noNumber)) return false;
+
+      // Avoid redundant "confirm the time" questions when the time is already explicitly in the user message.
+      if (timesInMessage.length && t.includes("confirmer") && (t.includes("heure") || t.includes("horaire"))) {
+        const mentionsSameTime = timesInMessage.some((tm) => t.includes(tm));
+        if (mentionsSameTime) return false;
+      }
+
+      return true;
+    })
+    .slice(0, 7);
+
+  parsed.questionsMissing = filtered;
+
+  // If user mentions transport but doesn't want/care about the number, keep it as optional context in recap.
+  if ((!scheduleIntent || noNumber) && (msg.includes("vol") || msg.includes("train") || msg.includes("tgv") || msg.includes("sncf"))) {
+    const recapRaw = Array.isArray(parsed.recap) ? (parsed.recap as unknown[]) : [];
+    const recap = recapRaw
+      .map((x) => (typeof x === "string" ? x.trim() : ""))
+      .filter(Boolean);
+
+    const already = recap.some((s) => s.toLowerCase().includes("num") && (s.toLowerCase().includes("vol") || s.toLowerCase().includes("train")));
+    if (!already) {
+      parsed.recap = [...recap, "Vol/train: numéro non communiqué (optionnel)."].slice(0, 12);
+    }
+  }
+}
+
+function extractJsonObject(text: string): UnknownRecord | null {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+
+  const tryParse = (s: string) => {
+    try {
+      const parsed = JSON.parse(s) as unknown;
+      return parsed && typeof parsed === "object" ? (parsed as UnknownRecord) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Direct JSON
+  if (raw.startsWith("{") && raw.endsWith("}")) {
+    const direct = tryParse(raw);
+    if (direct) return direct;
+  }
+
+  // Fenced block fallback
+  const fenceMatch = raw.match(/```json\s*([\s\S]*?)\s*```/i);
+  if (fenceMatch && fenceMatch[1]) {
+    const fenced = tryParse(fenceMatch[1].trim());
+    if (fenced) return fenced;
+  }
+
+  // Best-effort: find first { ... }
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const slice = raw.slice(start, end + 1);
+    const loose = tryParse(slice);
+    if (loose) return loose;
+  }
+
+  return null;
+}
+
+function normalizeIsoDate(value: unknown) {
+  const v = clampString(value, 32);
+  if (!v) return "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "";
+}
+
+function normalizeTimeHHmm(value: unknown) {
+  const v = clampString(value, 16);
+  if (!v) return "";
+  return /^\d{2}:\d{2}$/.test(v) ? v : "";
+}
+
+function sanitizeFormUpdate(value: unknown, ctx: UnknownRecord): AiAssistantFormUpdate | null {
+  const obj = value && typeof value === "object" ? (value as UnknownRecord) : null;
+  if (!obj) return null;
+
+  const pickup = clampString(obj.pickup, 220);
+  const dropoff = clampString(obj.dropoff, 220);
+  const pickupDate = normalizeIsoDate(obj.pickupDate);
+  const pickupTime = normalizeTimeHHmm(obj.pickupTime);
+
+  const vehiclesCatalogRaw = Array.isArray(ctx.vehiclesCatalog) ? (ctx.vehiclesCatalog as unknown[]) : [];
+  const allowedVehicleIds = new Set(
+    vehiclesCatalogRaw
+      .map((v) => (v && typeof v === "object" ? clampString((v as UnknownRecord).id, 64) : ""))
+      .filter(Boolean),
+  );
+  const vehicleIdCandidate = clampString(obj.vehicleId, 64);
+  const vehicleId = vehicleIdCandidate && allowedVehicleIds.has(vehicleIdCandidate) ? vehicleIdCandidate : "";
+
+  const optionsCatalogRaw = Array.isArray(ctx.optionsCatalog) ? (ctx.optionsCatalog as unknown[]) : [];
+  const allowedOptionIds = new Set(
+    optionsCatalogRaw
+      .map((o) => (o && typeof o === "object" ? clampString((o as UnknownRecord).id, 64) : ""))
+      .filter(Boolean),
+  );
+  const hasOptionIdsField = Array.isArray(obj.optionIds);
+  const optionIdsRaw = hasOptionIdsField ? ((obj.optionIds as unknown[]) ?? []) : [];
+  const optionIds = optionIdsRaw
+    .map((x) => clampString(x, 64))
+    .filter((id) => id && allowedOptionIds.has(id))
+    .slice(0, 12);
+
+  const out: AiAssistantFormUpdate = {};
+  if (pickup) out.pickup = pickup;
+  if (dropoff) out.dropoff = dropoff;
+  if (pickupDate) out.pickupDate = pickupDate;
+  if (pickupTime) out.pickupTime = pickupTime;
+  if (vehicleId) out.vehicleId = vehicleId;
+  // If the model explicitly provided optionIds: [] we treat it as an explicit choice of "no options".
+  if (hasOptionIdsField) out.optionIds = optionIds;
+
+  return Object.keys(out).length ? out : null;
+}
+
+function formatReplyFromModelJson(obj: UnknownRecord): string {
+  const q = Array.isArray(obj.questionsMissing) ? obj.questionsMissing : [];
+  const r = Array.isArray(obj.recap) ? obj.recap : [];
+  const n = Array.isArray(obj.nextStep) ? obj.nextStep : [];
+
+  const questionsMissing = q
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 7);
+  const recap = r
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 7);
+  const nextStep = n
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 7);
+
+  const lines: string[] = [];
+  lines.push("1) Questions manquantes");
+  lines.push(...(questionsMissing.length ? questionsMissing.map((s) => `- ${s}`) : ["- (aucune)"]));
+  lines.push("");
+  lines.push("2) Récap devis (si quote)");
+  lines.push(...(recap.length ? recap.map((s) => `- ${s}`) : ["- (pas encore de devis)" ]));
+  lines.push("");
+  lines.push("3) Prochaine étape");
+  lines.push(
+    ...(nextStep.length
+      ? nextStep.map((s) => `- ${s}`)
+      : ["- Remplissez le calculateur, cliquez sur 'Calculer les tarifs', choisissez un véhicule, puis cliquez sur 'Réserver'."]),
+  );
+  return lines.join("\n").trim();
+}
+
+function ensureOptionsQuestion({ parsed, context }: { parsed: UnknownRecord; context: UnknownRecord }) {
+  const optionsCatalogRaw = Array.isArray(context.optionsCatalog) ? (context.optionsCatalog as unknown[]) : [];
+  if (!optionsCatalogRaw.length) return;
+
+  // The widget tracks whether we already asked about options once.
+  // Requirement: ask only once, then continue with the rest of the form.
+  if (context.aiOptionsAskedOnce === true) return;
+
+  // If the widget already has an explicit decision, don't ask.
+  const decision = typeof context.aiOptionsDecision === "string" ? context.aiOptionsDecision.trim() : "";
+  if (decision && decision !== "unknown") return;
+
+  // If the user already selected options in the calculator context, don't ask.
+  const currentOptions = Array.isArray(context.options) ? (context.options as unknown[]) : [];
+  const hasSelectedOptionLabels = currentOptions.some((x) => typeof x === "string" && x.trim());
+  if (hasSelectedOptionLabels) return;
+
+  // If the model already provided optionIds (including []), don't ask.
+  const fu = parsed.formUpdate && typeof parsed.formUpdate === "object" ? (parsed.formUpdate as UnknownRecord) : null;
+  if (fu && Array.isArray(fu.optionIds)) return;
+
+  const labels = optionsCatalogRaw
+    .map((o) => (o && typeof o === "object" ? clampString((o as UnknownRecord).label, 60) : ""))
+    .filter(Boolean)
+    .slice(0, 3);
+
+  const examples = labels.length ? ` (ex: ${labels.join(" · ")})` : "";
+  const question = `Souhaitez-vous des options${examples}, ou aucune option ?`;
+
+  const existing = Array.isArray(parsed.questionsMissing) ? (parsed.questionsMissing as unknown[]) : [];
+  const normalized = existing
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean);
+
+  const alreadyAsks = normalized.some((s) => {
+    const t = s.toLowerCase();
+    return t.includes("aucune option") || t.includes("souhaitez-vous") && t.includes("option");
+  });
+  if (alreadyAsks) return;
+
+  parsed.questionsMissing = [question, ...normalized].slice(0, 7);
+}
+
+function ensureVehicleQuotesInRecap({ parsed, context }: { parsed: UnknownRecord; context: UnknownRecord }) {
+  const vehicleQuotesRaw = Array.isArray(context.vehicleQuotes) ? (context.vehicleQuotes as unknown[]) : [];
+  if (!vehicleQuotesRaw.length) return;
+
+  const currency = typeof context.currency === "string" && context.currency.trim() ? context.currency.trim() : "EUR";
+
+  const rows = vehicleQuotesRaw
+    .map((q) => {
+      const qq = q && typeof q === "object" ? (q as UnknownRecord) : null;
+      if (!qq) return "";
+      const label = clampString(qq.label, 80) || clampString(qq.id, 64);
+      const isQuote = !!qq.isQuote;
+      const total = typeof qq.total === "number" && Number.isFinite(qq.total) ? qq.total : null;
+      if (!label) return "";
+      if (isQuote) return `- ${label}: sur devis`;
+      if (typeof total === "number") return `- ${label}: ${total.toFixed(2)} ${currency}`;
+      return "";
+    })
+    .filter(Boolean)
+    .slice(0, 12);
+
+  if (!rows.length) return;
+
+  const existingRaw = Array.isArray(parsed.recap) ? (parsed.recap as unknown[]) : [];
+  const existing = existingRaw
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean);
+
+  const alreadyHasTariffs = existing.some((s) => {
+    const t = s.toLowerCase();
+    return t.includes(":") && (t.includes(currency.toLowerCase()) || t.includes("sur devis"));
+  });
+  if (alreadyHasTariffs) return;
+
+  parsed.recap = [...existing, "Tarifs calculés (par véhicule):", ...rows].slice(0, 14);
 }
 
 function hasSerperKey() {
@@ -193,19 +521,25 @@ function hasSerperKey() {
 
 function looksLikeScheduleQuestion(message: string) {
   const m = message.toLowerCase();
+
+  const mentionsTransport =
+    m.includes("vol") || m.includes("flight") || m.includes("train") || m.includes("tgv") || m.includes("sncf");
+  if (!mentionsTransport) return false;
+
+  // Only treat it as a "schedule" question when the user explicitly asks for a check/verification/status.
   return (
-    m.includes("vol") ||
-    m.includes("flight") ||
-    m.includes("train") ||
-    m.includes("tgv") ||
-    m.includes("sncf") ||
-    m.includes("gare") ||
-    m.includes("aéroport") ||
-    m.includes("airport") ||
-    m.includes("horaire") ||
     m.includes("retard") ||
-    m.includes("arrivée") ||
-    m.includes("départ")
+    m.includes("en retard") ||
+    m.includes("horaire") ||
+    m.includes("statut") ||
+    m.includes("status") ||
+    m.includes("suivi") ||
+    m.includes("tracker") ||
+    m.includes("sur internet") ||
+    m.includes("vérifi") ||
+    m.includes("verifi") ||
+    m.includes("chercher") ||
+    m.includes("recherche")
   );
 }
 
@@ -293,12 +627,13 @@ export async function callOpenAi({
     }
   }
 
+  const todayIso = new Date().toISOString().slice(0, 10);
   const messages = [
     { role: "system", content: buildSystemPrompt() },
     {
       role: "user",
       content:
-        `Contexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\nMessage utilisateur:\n${userMessage}`,
+        `Aujourd'hui (ISO): ${todayIso}\nFuseau: Europe/Paris\n\nContexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\nMessage utilisateur:\n${userMessage}`,
     },
   ];
 
@@ -509,8 +844,8 @@ export async function callOpenAi({
     };
   }
 
-  const reply = res.reply.trim();
-  if (!reply) {
+  const replyRaw = res.reply.trim();
+  if (!replyRaw) {
     // Some GPT-5 configs can consume all tokens in reasoning and produce no visible text.
     // Fallback to a text-reliable model to keep the widget functional.
     if (modelLower.startsWith("gpt-5") && fallbackModel && fallbackModel !== model) {
@@ -528,5 +863,17 @@ export async function callOpenAi({
     return { ok: false as const, error: "OPENAI_EMPTY" as const };
   }
 
-  return { ok: true as const, reply };
+  // Prefer structured output when possible.
+  const parsed = extractJsonObject(replyRaw);
+  if (parsed) {
+    relaxTransportQuestions({ parsed, userMessage });
+    ensureOptionsQuestion({ parsed, context });
+    ensureVehicleQuotesInRecap({ parsed, context });
+    const formUpdate = sanitizeFormUpdate(parsed.formUpdate, context);
+    const reply = formatReplyFromModelJson(parsed);
+    return { ok: true as const, reply, formUpdate };
+  }
+
+  // Fallback: treat as plain text.
+  return { ok: true as const, reply: replyRaw };
 }

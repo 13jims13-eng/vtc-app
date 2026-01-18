@@ -23,6 +23,8 @@ let _widgetState = {
   selectedIsQuote: false,
   selectedTotal: null,
   customOptionText: "",
+  aiOptionsAskedOnce: false,
+  aiOptionsDecision: "", // "none" | "some" | ""
 };
 
 let _optionsOriginalPlacement = null;
@@ -494,6 +496,15 @@ function injectAiAssistantStylesOnce() {
       color: var(--vtc-ai-text, #111827);
       border-color: var(--vtc-ai-border, rgba(0,0,0,.12));
     }
+    .vtc-ai__btn--icon {
+      padding: 10px;
+      min-width: 44px;
+      width: 44px;
+    }
+    .vtc-ai__btn--listening {
+      border-color: color-mix(in srgb, var(--vtc-ai-accent, #111827) 60%, transparent);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--vtc-ai-accent, #111827) 18%, transparent);
+    }
     .vtc-ai__status { margin-top: 10px; font-size: 13px; color: var(--vtc-ai-muted, rgba(0,0,0,.8)); }
     .vtc-ai__error { margin-top: 10px; font-size: 13px; color: var(--vtc-ai-danger, #b91c1c); }
     .vtc-ai__reply {
@@ -646,6 +657,8 @@ function buildAiAssistantContext() {
     options,
     vehiclesCatalog,
     optionsCatalog,
+    aiOptionsAskedOnce: !!_widgetState.aiOptionsAskedOnce,
+    aiOptionsDecision: String(_widgetState.aiOptionsDecision || "").trim() || undefined,
     pricingBehavior: String(cfg?.pricingBehavior || "").trim() || undefined,
     leadTimeThresholdMinutes:
       typeof cfg?.leadTimeThresholdMinutes === "number" ? cfg.leadTimeThresholdMinutes : undefined,
@@ -658,6 +671,49 @@ function buildAiAssistantContext() {
       duration,
     },
   };
+
+  // Provide per-vehicle prices computed by the same calculator logic (not by AI).
+  // This allows the assistant to explain prices without inventing or recalculating.
+  try {
+    if (cfg && trip && typeof trip.distanceKm === "number") {
+      const pickupDate = String(trip.pickupDate || "").trim();
+      const pickupTime = String(trip.pickupTime || "").trim();
+      const leadTimeInfo = getLeadTimeInfo({ pickupDate, pickupTime });
+      const stopsCount = Array.isArray(trip.stops) ? trip.stops.length : 0;
+
+      const vehicleQuotes = (Array.isArray(cfg.vehicles) ? cfg.vehicles : [])
+        .map((v) => {
+          const id = String(v?.id || "").trim();
+          const label = String(v?.label || "").trim();
+          if (!id) return null;
+
+          // If date is missing, we can still compute "all_quote"/quoteOnly, but totals may be incomplete.
+          const computed = computeTariffForVehicle({
+            km: trip.distanceKm,
+            stopsCount,
+            pickupTime,
+            pickupDate,
+            vehicleId: id,
+            leadTimeInfo,
+          });
+
+          return {
+            id,
+            label: label || computed.vehicleLabel || id,
+            isQuote: !!computed.isQuote,
+            total: computed.isQuote ? null : typeof computed.total === "number" ? computed.total : null,
+          };
+        })
+        .filter(Boolean)
+        .slice(0, 12);
+
+      if (vehicleQuotes.length) {
+        context.vehicleQuotes = vehicleQuotes;
+      }
+    }
+  } catch {
+    // ignore
+  }
 
   return context;
 }
@@ -719,12 +775,13 @@ function initAiAssistantUI() {
     <div class="vtc-ai__header">
       <div>
         <div class="vtc-ai__title">Assistant IA</div>
-        <div class="vtc-ai__badge">Conseils + aide réservation (sans recalcul du prix)</div>
+        <div class="vtc-ai__badge">Conseils + aide réservation (tarifs du calculateur, sans recalcul IA)</div>
       </div>
     </div>
     <div class="vtc-ai__body">
       <div class="vtc-ai__row">
         <textarea id="vtc-ai-input" class="vtc-ai__input" placeholder="Ex: Je suis 2 adultes + 2 valises, quel véhicule me conseillez-vous ?"></textarea>
+        <button id="vtc-ai-mic" class="vtc-ai__btn vtc-ai__btn--subtle vtc-ai__btn--icon" type="button" title="Dicter un message">Mic</button>
         <button id="vtc-ai-send" class="vtc-ai__btn" type="button">Envoyer</button>
       </div>
       <div id="vtc-ai-status" class="vtc-ai__status" style="display:none;"></div>
@@ -799,6 +856,7 @@ function initAiAssistantUI() {
   if (privacyLink) privacyLink.setAttribute("href", getPrivacyPolicyUrl());
 
   const input = panel.querySelector("#vtc-ai-input");
+  const micBtn = panel.querySelector("#vtc-ai-mic");
   const sendBtn = panel.querySelector("#vtc-ai-send");
   const statusEl = panel.querySelector("#vtc-ai-status");
   const errorEl = panel.querySelector("#vtc-ai-error");
@@ -810,6 +868,148 @@ function initAiAssistantUI() {
 
   let lastReply = "";
   const chatHistory = [];
+
+  function extractAiSection(text, sectionPrefix) {
+    const raw = String(text || "").trim();
+    if (!raw) return "";
+    const lines = raw.split(/\r?\n/).map((l) => l.trim());
+    let start = -1;
+    for (let i = 0; i < lines.length; i += 1) {
+      if (lines[i].toLowerCase().startsWith(String(sectionPrefix).toLowerCase())) {
+        start = i + 1;
+        break;
+      }
+    }
+    if (start < 0) return "";
+    const out = [];
+    for (let i = start; i < lines.length; i += 1) {
+      const l = lines[i];
+      if (/^\d\)\s+/.test(l)) break;
+      if (!l) continue;
+      out.push(l);
+    }
+    return out.join("\n").trim();
+  }
+
+  function buildAdaptiveSummaryText() {
+    const base = buildTripSummaryText();
+    const parts = [];
+    if (base) parts.push(base);
+
+    const recap = extractAiSection(lastReply, "2) Récap devis");
+    if (recap) {
+      parts.push(`Assistant IA — récapitulatif\n${recap}`);
+    } else if (lastReply) {
+      parts.push(`Assistant IA\n${String(lastReply || "").trim()}`);
+    }
+
+    return parts.join("\n\n").trim();
+  }
+
+  // Speech-to-text (Web Speech API) — best-effort.
+  const SpeechRecognition =
+    (typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition)) || null;
+  let recognition = null;
+  let isListening = false;
+  let dictationBaseText = "";
+  let dictationLastInterim = "";
+
+  function setMicState(listening) {
+    isListening = !!listening;
+    if (!micBtn) return;
+    micBtn.classList.toggle("vtc-ai__btn--listening", isListening);
+    micBtn.textContent = isListening ? "Stop" : "Mic";
+  }
+
+  function ensureRecognition() {
+    if (!SpeechRecognition) return null;
+    if (recognition) return recognition;
+    try {
+      recognition = new SpeechRecognition();
+      recognition.lang = "fr-FR";
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setError("");
+        setStatus("Écoute…");
+        setMicState(true);
+
+        dictationBaseText = String(input?.value || "").trim();
+        dictationLastInterim = "";
+      };
+
+      recognition.onend = () => {
+        setMicState(false);
+        setStatus("");
+
+        // Cleanup interim state.
+        dictationLastInterim = "";
+      };
+
+      recognition.onerror = (e) => {
+        const code = String(e?.error || "").trim();
+        setMicState(false);
+        if (code === "not-allowed" || code === "service-not-allowed") {
+          setError("Micro refusé. Autorisez l'accès au micro dans le navigateur.");
+        } else if (code === "no-speech") {
+          setError("Aucune voix détectée. Réessayez.");
+        } else {
+          setError("Dictée vocale indisponible sur ce navigateur.");
+        }
+        setStatus("");
+      };
+
+      recognition.onresult = (event) => {
+        if (!input) return;
+        let interim = "";
+        let finalChunk = "";
+
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          const r = event.results[i];
+          const alt0 = r && r[0] ? r[0] : null;
+          const t = alt0 && alt0.transcript ? String(alt0.transcript) : "";
+          if (!t) continue;
+          if (r.isFinal) finalChunk += t;
+          else interim += t;
+        }
+
+        const interimTrim = interim.trim();
+        const finalTrim = finalChunk.trim();
+
+        // Update preview text without re-appending interim multiple times.
+        if (interimTrim && interimTrim !== dictationLastInterim) {
+          dictationLastInterim = interimTrim;
+          const base = dictationBaseText;
+          input.value = base ? `${base} ${interimTrim}` : interimTrim;
+          try {
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          } catch {
+            // ignore
+          }
+        }
+
+        // Commit final chunk by appending it once to the base.
+        if (finalTrim) {
+          const base = dictationBaseText;
+          dictationBaseText = base ? `${base} ${finalTrim}` : finalTrim;
+          dictationLastInterim = "";
+          input.value = dictationBaseText;
+          try {
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          } catch {
+            // ignore
+          }
+        }
+      };
+    } catch {
+      recognition = null;
+      return null;
+    }
+
+    return recognition;
+  }
 
   function pushHistory(role, content) {
     const r = role === "assistant" ? "assistant" : "user";
@@ -838,6 +1038,177 @@ function initAiAssistantUI() {
     replyEl.textContent = v;
   }
 
+  function applyInputValueIfEmpty(inputEl, value) {
+    if (!inputEl) return false;
+    const v = String(value || "").trim();
+    if (!v) return false;
+    const current = String(inputEl.value || "").trim();
+    if (current) return false;
+
+    inputEl.value = v;
+    try {
+      inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+      inputEl.dispatchEvent(new Event("change", { bubbles: true }));
+      inputEl.dispatchEvent(new Event("blur", { bubbles: true }));
+    } catch {
+      // ignore
+    }
+    return true;
+  }
+
+  function applyCheckboxSelectionByIds(containerEl, ids) {
+    if (!containerEl || !Array.isArray(ids)) return false;
+    const wanted = new Set(ids.map((x) => String(x || "").trim()).filter(Boolean));
+    if (!wanted.size) return false;
+
+    let changed = false;
+    containerEl.querySelectorAll("input[type=checkbox][data-option-id]").forEach((input) => {
+      const el = input;
+      const id = String(el.dataset.optionId || "").trim();
+      if (!id) return;
+      const shouldCheck = wanted.has(id);
+      if (el.checked !== shouldCheck) {
+        el.checked = shouldCheck;
+        changed = true;
+        try {
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    return changed;
+  }
+
+  function clearAllOptions(containerEl) {
+    if (!containerEl) return false;
+    let changed = false;
+    containerEl.querySelectorAll("input[type=checkbox][data-option-id]").forEach((input) => {
+      const el = input;
+      if (!el.checked) return;
+      el.checked = false;
+      changed = true;
+      try {
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      } catch {
+        // ignore
+      }
+    });
+    return changed;
+  }
+
+  function applyVehicleSelection(formUpdate) {
+    const cfg = typeof getWidgetConfig === "function" ? getWidgetConfig() : null;
+    const vehicleId = String(formUpdate?.vehicleId || "").trim();
+    if (!cfg || !vehicleId) return false;
+
+    const escAttr = (v) => String(v || "").replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+
+    // Mode A: radio selection
+    if (cfg.displayMode === "A") {
+      const widgetEl = getWidgetEl() || document;
+      const radio =
+        widgetEl.querySelector?.(`input[name="vehicle"][value="${escAttr(vehicleId)}"]`) ||
+        document.querySelector(`input[name="vehicle"][value="${escAttr(vehicleId)}"]`);
+
+      if (radio && !radio.checked) {
+        radio.checked = true;
+        try {
+          radio.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch {
+          // ignore
+        }
+        return true;
+      }
+      return false;
+    }
+
+    // Mode B: tariffs selection (requires tariffs list to exist)
+    const btn = document.querySelector(`button[data-vehicle-id="${escAttr(vehicleId)}"]`);
+    if (btn) {
+      btn.click();
+      return true;
+    }
+
+    return false;
+  }
+
+  function maybeTriggerCalculator() {
+    const start = String(document.getElementById("start")?.value || "").trim();
+    const end = String(document.getElementById("end")?.value || "").trim();
+    const pickupDate = String(document.getElementById("pickupDate")?.value || "").trim();
+    if (!start || !end || !pickupDate) return false;
+
+    if (typeof window.calculatePrice === "function") {
+      try {
+        window.calculatePrice();
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function applyAiFormUpdate(formUpdate) {
+    if (!formUpdate || typeof formUpdate !== "object") return { changed: false };
+
+    const startInput = document.getElementById("start");
+    const endInput = document.getElementById("end");
+    const dateInput = document.getElementById("pickupDate");
+    const timeInput = document.getElementById("pickupTime");
+    const optionsContainer = document.getElementById("vtc-options");
+
+    let changed = false;
+    changed = applyInputValueIfEmpty(startInput, formUpdate.pickup) || changed;
+    changed = applyInputValueIfEmpty(endInput, formUpdate.dropoff) || changed;
+    changed = applyInputValueIfEmpty(dateInput, formUpdate.pickupDate) || changed;
+    changed = applyInputValueIfEmpty(timeInput, formUpdate.pickupTime) || changed;
+
+    // Options are theme-configured via data-option-id.
+    // If optionIds is omitted -> do nothing.
+    // If optionIds is [] -> explicit "no options" -> clear all.
+    // If optionIds has values -> select exactly those ids.
+    if (Array.isArray(formUpdate.optionIds)) {
+      if (formUpdate.optionIds.length === 0) {
+        changed = clearAllOptions(optionsContainer) || changed;
+      } else {
+        changed = applyCheckboxSelectionByIds(optionsContainer, formUpdate.optionIds) || changed;
+      }
+    }
+
+    // Vehicle selection depends on display mode.
+    changed = applyVehicleSelection(formUpdate) || changed;
+
+    // Trigger calculator pricing (theme settings) when mandatory fields exist.
+    const triggered = maybeTriggerCalculator();
+
+    // If the trip exists, keep summary consistent after option updates.
+    try {
+      syncAiOptionsDecisionFromUI();
+    } catch {
+      // ignore
+    }
+
+    // In mode B, tariffs buttons are rendered asynchronously after Google Directions callback.
+    // If vehicleId was provided and not selectable yet, retry a few times.
+    const cfg = typeof getWidgetConfig === "function" ? getWidgetConfig() : null;
+    const vehicleId = String(formUpdate?.vehicleId || "").trim();
+    if (cfg?.displayMode === "B" && vehicleId) {
+      let tries = 0;
+      const tick = () => {
+        tries += 1;
+        const ok = applyVehicleSelection({ vehicleId });
+        if (ok || tries >= 12) return;
+        window.setTimeout(tick, 250);
+      };
+      window.setTimeout(tick, 250);
+    }
+
+    return { changed, triggered };
+  }
+
   async function sendMessage() {
     const message = String(input?.value || "").trim();
     setError("");
@@ -849,8 +1220,15 @@ function initAiAssistantUI() {
 
     pushHistory("user", message);
 
+    // Stop dictation if active.
+    try {
+      if (recognition && isListening) recognition.stop();
+    } catch {
+      // ignore
+    }
+
     if (sendBtn) sendBtn.setAttribute("disabled", "disabled");
-    setStatus("Analyse en cours…");
+    setStatus("Message enregistré. Analyse en cours…");
 
     const body = {
       userMessage: message,
@@ -898,6 +1276,31 @@ function initAiAssistantUI() {
       lastReply = String(json.reply || "").trim();
       setReply(lastReply);
       pushHistory("assistant", lastReply);
+
+      // Optional: let the AI auto-fill calculator fields (no pricing here).
+      if (json && typeof json === "object" && json.formUpdate) {
+        const applied = applyAiFormUpdate(json.formUpdate);
+        if (applied?.changed) {
+          setStatus(applied.triggered ? "Champs mis à jour, calcul en cours…" : "Champs mis à jour dans le calculateur." );
+          setTimeout(() => setStatus(""), 2200);
+        }
+      }
+
+      // UX: clear the input only AFTER the assistant replied (so the summary can reflect the IA + form updates).
+      if (input) {
+        input.value = "";
+        try {
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        } catch {
+          // ignore
+        }
+        try {
+          input.focus();
+        } catch {
+          // ignore
+        }
+      }
+
       setStatus("");
       return;
     } catch (e) {
@@ -920,7 +1323,7 @@ function initAiAssistantUI() {
       return;
     }
 
-    const tripSummaryText = buildTripSummaryText();
+    const tripSummaryText = buildAdaptiveSummaryText();
     if (!tripSummaryText && !chatHistory.length) {
       setError("Renseignez d’abord un trajet ou posez une question à l’assistant.");
       return;
@@ -981,6 +1384,42 @@ function initAiAssistantUI() {
 
   sendBtn?.addEventListener("click", () => sendMessage());
   sendEmailBtn?.addEventListener("click", () => sendLeadEmail());
+
+  micBtn?.addEventListener("click", () => {
+    setError("");
+    if (!SpeechRecognition) {
+      setError("Dictée vocale non supportée sur ce navigateur.");
+      return;
+    }
+    // Web Speech generally requires HTTPS (or localhost).
+    try {
+      const isLocalhost = typeof window !== "undefined" && /^(localhost|127\.0\.0\.1)$/i.test(window.location?.hostname || "");
+      const isHttps = typeof window !== "undefined" && window.location?.protocol === "https:";
+      if (!isHttps && !isLocalhost) {
+        setError("La dictée vocale nécessite HTTPS (ou localhost).");
+        return;
+      }
+    } catch {
+      // ignore
+    }
+
+    const rec = ensureRecognition();
+    if (!rec) {
+      setError("Dictée vocale indisponible.");
+      return;
+    }
+
+    try {
+      if (isListening) {
+        rec.stop();
+      } else {
+        rec.start();
+      }
+    } catch {
+      setError("Impossible de démarrer la dictée vocale.");
+      setMicState(false);
+    }
+  });
   input?.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -989,7 +1428,7 @@ function initAiAssistantUI() {
   });
 
   copySummaryBtn?.addEventListener("click", async () => {
-    const txt = buildTripSummaryText();
+    const txt = buildAdaptiveSummaryText();
     const ok = await copyToClipboard(txt);
     setStatus(ok ? "Résumé copié." : "Impossible de copier le résumé.");
     setTimeout(() => setStatus(""), 2500);
@@ -1004,8 +1443,7 @@ function initAiAssistantUI() {
 
   whatsappLink?.addEventListener("click", (e) => {
     e.preventDefault();
-    const summary = buildTripSummaryText();
-    const msg = lastReply ? `${summary}\n\n${lastReply}` : summary;
+    const msg = buildAdaptiveSummaryText();
     const url = buildWhatsAppUrl(msg);
     if (!url) {
       setError("Calculez un trajet pour générer un résumé WhatsApp.");
@@ -1578,6 +2016,11 @@ function refreshPricingAfterOptionsChange() {
   renderTripSummaryFromLastTrip();
 }
 
+function syncAiOptionsDecisionFromUI() {
+  const selected = getSelectedOptions ? getSelectedOptions() : [];
+  _widgetState.aiOptionsDecision = selected.length ? "some" : _widgetState.aiOptionsDecision === "none" ? "none" : "";
+}
+
 function setReserveButtonEnabled(enabled) {
   const reserveBtn = document.getElementById("reserve-btn");
   if (!reserveBtn) return;
@@ -1700,11 +2143,47 @@ function renderVehiclesAndOptions() {
       })
       .join("\n");
 
+    // Add a simple "Aucune option" helper button (does not block calculation).
+    if (!document.getElementById("vtc-options-none")) {
+      const btnWrap = document.createElement("div");
+      btnWrap.style.marginTop = "8px";
+      btnWrap.innerHTML = `
+        <button id="vtc-options-none" type="button" class="vtc-btn" style="padding:8px 10px;font-size:13px;">
+          Aucune option
+        </button>
+      `.trim();
+      optionsContainer.insertAdjacentElement("afterend", btnWrap);
+    }
+
     optionsContainer.querySelectorAll("input[type=checkbox]").forEach((input) => {
       input.addEventListener("change", () => {
         // Always refresh summary line-items
+        syncAiOptionsDecisionFromUI();
         refreshPricingAfterOptionsChange();
       });
+    });
+  }
+
+  const noneBtn = document.getElementById("vtc-options-none");
+  if (noneBtn && !noneBtn._vtcBound) {
+    noneBtn._vtcBound = true;
+    noneBtn.addEventListener("click", () => {
+      const container = document.getElementById("vtc-options");
+      if (!container) return;
+      let changed = false;
+      container.querySelectorAll('input[type=checkbox][data-option-id]').forEach((input) => {
+        const el = input;
+        if (!el.checked) return;
+        el.checked = false;
+        changed = true;
+        try {
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch {
+          // ignore
+        }
+      });
+      _widgetState.aiOptionsDecision = "none";
+      if (changed) refreshPricingAfterOptionsChange();
     });
   }
 
