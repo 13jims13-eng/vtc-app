@@ -90,6 +90,191 @@ function clampString(value: unknown, maxLen: number) {
   return v.length > maxLen ? v.slice(0, maxLen) : v;
 }
 
+function nowInParis() {
+  try {
+    return new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Paris" }));
+  } catch {
+    return new Date();
+  }
+}
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+function toIsoDateLocal(d: Date) {
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  return `${y}-${pad2(m)}-${pad2(day)}`;
+}
+
+function normalizeLocation(value: string) {
+  let v = String(value || "").trim();
+  if (!v) return "";
+  v = v.replace(/^[\s“”"'`]+|[\s“”"'`]+$/g, "").trim();
+  v = v.replace(/[\s,;\/]+$/g, "").trim();
+  if (v.length < 2) return "";
+  return v.slice(0, 220);
+}
+
+function extractTimeFromText(text: string) {
+  const t = String(text || "");
+  // 14h30 / 14 h 30 / 14:30 / 9h
+  const m = t.match(/\b([01]?\d|2[0-3])\s*(?:h|:)\s*([0-5]\d)?\b/i);
+  if (!m) return "";
+  const hh = Number.parseInt(m[1] || "", 10);
+  if (!Number.isFinite(hh)) return "";
+  const mmRaw = typeof m[2] === "string" && m[2].length ? m[2] : "00";
+  const mm = Number.parseInt(mmRaw, 10);
+  if (!Number.isFinite(mm) || mm < 0 || mm > 59) return "";
+  return `${pad2(hh)}:${pad2(mm)}`;
+}
+
+function extractDateFromText(text: string) {
+  const s = String(text || "");
+  const low = s.toLowerCase();
+  const base = nowInParis();
+
+  // Relative
+  if (/(\baujourd['’]?hui\b|\baujourdhui\b)/i.test(low)) return toIsoDateLocal(base);
+  if (/\bdemain\b/i.test(low)) {
+    const d = new Date(base);
+    d.setDate(d.getDate() + 1);
+    return toIsoDateLocal(d);
+  }
+  if (/(\baprès[-\s]?demain\b|\bapres[-\s]?demain\b)/i.test(low)) {
+    const d = new Date(base);
+    d.setDate(d.getDate() + 2);
+    return toIsoDateLocal(d);
+  }
+
+  // Numeric: 20/01(/2026)
+  const num = s.match(/\b(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?\b/);
+  if (num) {
+    const day = Number.parseInt(num[1] || "", 10);
+    const month = Number.parseInt(num[2] || "", 10);
+    let year = num[3] ? Number.parseInt(num[3], 10) : base.getFullYear();
+    if (year < 100) year += 2000;
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      const d = new Date(year, month - 1, day);
+      // If year omitted and date already passed, assume next year.
+      if (!num[3] && d < new Date(base.getFullYear(), base.getMonth(), base.getDate())) {
+        d.setFullYear(d.getFullYear() + 1);
+      }
+      return toIsoDateLocal(d);
+    }
+  }
+
+  // French months: 20 janvier
+  const monthMap: Record<string, number> = {
+    janvier: 1,
+    fevrier: 2,
+    février: 2,
+    mars: 3,
+    avril: 4,
+    mai: 5,
+    juin: 6,
+    juillet: 7,
+    aout: 8,
+    août: 8,
+    septembre: 9,
+    octobre: 10,
+    novembre: 11,
+    decembre: 12,
+    décembre: 12,
+  };
+  const fm = s.match(/\b(\d{1,2})(?:er)?\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\b/i);
+  if (fm) {
+    const day = Number.parseInt(fm[1] || "", 10);
+    const monthName = (fm[2] || "").toLowerCase();
+    const month = monthMap[monthName] || 0;
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      const d = new Date(base.getFullYear(), month - 1, day);
+      if (d < new Date(base.getFullYear(), base.getMonth(), base.getDate())) d.setFullYear(d.getFullYear() + 1);
+      return toIsoDateLocal(d);
+    }
+  }
+
+  // Bare day: "le 20" (avoid if it's clearly pax/bags or time)
+  const bare = s.match(/\ble\s+(\d{1,2})\b/i);
+  if (bare) {
+    const day = Number.parseInt(bare[1] || "", 10);
+    if (day >= 1 && day <= 31) {
+      // pick next occurrence in calendar (this month or next)
+      const d = new Date(base.getFullYear(), base.getMonth(), day);
+      if (d < new Date(base.getFullYear(), base.getMonth(), base.getDate())) {
+        d.setMonth(d.getMonth() + 1);
+      }
+      return toIsoDateLocal(d);
+    }
+  }
+
+  return "";
+}
+
+function extractBookingBasicsFromConversation({
+  userMessage,
+  history,
+}: {
+  userMessage: string;
+  history?: { role: "user" | "assistant"; content: string }[];
+}) {
+  const parts: string[] = [];
+  const hist = Array.isArray(history) ? history : [];
+  for (const h of hist.slice(-12)) {
+    if (h && typeof h.content === "string") parts.push(h.content);
+  }
+  parts.push(String(userMessage || ""));
+  const text = parts.join("\n").trim();
+
+  const out: { pickup?: string; dropoff?: string; pickupDate?: string; pickupTime?: string } = {};
+  if (!text) return out;
+
+  // Date/time first
+  const pickupDate = extractDateFromText(text);
+  if (pickupDate) out.pickupDate = pickupDate;
+  const pickupTime = extractTimeFromText(text);
+  if (pickupTime) out.pickupTime = pickupTime;
+
+  const labeled = (labelRe: RegExp) => {
+    const m = text.match(labelRe);
+    if (!m) return "";
+    const v = normalizeLocation(m[1] || "");
+    return v;
+  };
+
+  // Labeled fields (most reliable)
+  const p1 = labeled(/(?:^|\b)(?:départ|depart|prise\s+en\s+charge|pickup|origine)\s*[:\-]\s*([^\n\/;|]+?)(?=\s*(?:\/|\n|;|\barriv(?:ée|ee)\b|\bdestination\b|\bdate\b|\bheure\b|$))/i);
+  const d1 = labeled(/(?:^|\b)(?:arriv(?:ée|ee)|destination|dépose|depose|dropoff|arrivée\s+\/?\s+destination)\s*[:\-]\s*([^\n\/;|]+?)(?=\s*(?:\/|\n|;|\bdate\b|\bheure\b|$))/i);
+  if (p1) out.pickup = p1;
+  if (d1) out.dropoff = d1;
+
+  // Pattern: "de X à Y"
+  if (!out.pickup || !out.dropoff) {
+    const m = text.match(/\b(?:de|depuis)\s+(.+?)\s+(?:à|a|vers)\s+(.+?)(?=\s*(?:,|;|\n|\/|\b(le|demain|aujourd|date|heure)\b|\b[01]?\d\s*(?:h|:)\s*[0-5]?\d?\b|$))/i);
+    if (m) {
+      const p = normalizeLocation(m[1] || "");
+      const d = normalizeLocation(m[2] || "");
+      if (p && !out.pickup) out.pickup = p;
+      if (d && !out.dropoff) out.dropoff = d;
+    }
+  }
+
+  // Pattern: "X -> Y"
+  if (!out.pickup || !out.dropoff) {
+    const m = text.match(/\b(.+?)\s*(?:->|→)\s*(.+?)(?=\s*(?:,|;|\n|\/|\b(le|demain|aujourd|date|heure)\b|$))/);
+    if (m) {
+      const p = normalizeLocation(m[1] || "");
+      const d = normalizeLocation(m[2] || "");
+      if (p && !out.pickup) out.pickup = p;
+      if (d && !out.dropoff) out.dropoff = d;
+    }
+  }
+
+  return out;
+}
+
 function parsePositiveIntEnv(value: unknown) {
   if (typeof value !== "string") return null;
   const n = Number.parseInt(value, 10);
@@ -1382,10 +1567,27 @@ export async function callOpenAi({
         .slice(0, 12)
     : [];
 
-  const pickup = clampString(context.pickup, 220);
-  const dropoff = clampString(context.dropoff, 220);
-  const pickupDate = clampString((context as UnknownRecord).date, 32);
-  const pickupTime = clampString((context as UnknownRecord).time, 16);
+  // In AI-only UI mode, the user can provide the itinerary directly via chat.
+  // Extract the basics deterministically before any gating so the assistant doesn't loop.
+  const extractedBasics = extractBookingBasicsFromConversation({ userMessage, history });
+  const extractedFormUpdate: AiAssistantFormUpdate = {};
+  if (!clampString(context.pickup, 220) && extractedBasics.pickup) extractedFormUpdate.pickup = extractedBasics.pickup;
+  if (!clampString(context.dropoff, 220) && extractedBasics.dropoff) extractedFormUpdate.dropoff = extractedBasics.dropoff;
+  if (!clampString((context as UnknownRecord).date, 32) && extractedBasics.pickupDate) extractedFormUpdate.pickupDate = extractedBasics.pickupDate;
+  if (!clampString((context as UnknownRecord).time, 16) && extractedBasics.pickupTime) extractedFormUpdate.pickupTime = extractedBasics.pickupTime;
+
+  const contextWithExtracted: UnknownRecord = {
+    ...context,
+    pickup: clampString(context.pickup, 220) || extractedBasics.pickup || "",
+    dropoff: clampString(context.dropoff, 220) || extractedBasics.dropoff || "",
+    date: clampString((context as UnknownRecord).date, 32) || extractedBasics.pickupDate || "",
+    time: clampString((context as UnknownRecord).time, 16) || extractedBasics.pickupTime || "",
+  };
+
+  const pickup = clampString(contextWithExtracted.pickup, 220);
+  const dropoff = clampString(contextWithExtracted.dropoff, 220);
+  const pickupDate = clampString((contextWithExtracted as UnknownRecord).date, 32);
+  const pickupTime = clampString((contextWithExtracted as UnknownRecord).time, 16);
 
   // Step 0: booking procedure — we need the base itinerary before asking anything else.
   // Without these, tariffs are unreliable (lead-time pricing, stops, etc.).
@@ -1405,12 +1607,13 @@ export async function callOpenAi({
         "Vous pouvez répondre en une phrase, ex: ‘Départ: … / Arrivée: … / le 20 janvier / 14h30’.",
         "(S’il y a un arrêt ou un aller-retour, dites-le aussi.)",
       ].join("\n"),
+      formUpdate: Object.keys(extractedFormUpdate).length ? extractedFormUpdate : undefined,
     };
   }
 
   // Enrich with server-side quotes early so we can always show tariffs even if the model returns plain text.
   const enrichedContextEarly = await maybeEnrichContextWithVehicleQuotes({
-    context: { ...context, aiOptionsDecision: effectiveOptionsDecision || undefined },
+    context: { ...contextWithExtracted, aiOptionsDecision: effectiveOptionsDecision || undefined },
     pickup,
     dropoff,
     pickupDate,
