@@ -25,6 +25,8 @@ let _widgetState = {
   customOptionText: "",
   aiOptionsAskedOnce: false,
   aiOptionsDecision: "", // "none" | "some" | ""
+  aiPassengersCount: null,
+  aiBagsCount: null,
 };
 
 function setCustomOptionText(value) {
@@ -681,6 +683,14 @@ function buildAiAssistantContext() {
     currency: "EUR",
     options,
     selectedOptionIds,
+    passengersCount:
+      typeof _widgetState.aiPassengersCount === "number" && Number.isFinite(_widgetState.aiPassengersCount)
+        ? _widgetState.aiPassengersCount
+        : undefined,
+    bagsCount:
+      typeof _widgetState.aiBagsCount === "number" && Number.isFinite(_widgetState.aiBagsCount)
+        ? _widgetState.aiBagsCount
+        : undefined,
     vehiclesCatalog,
     optionsCatalog,
     // Full pricing config (non-sensitive) to allow deterministic server-side quoting
@@ -789,6 +799,55 @@ function buildAiAssistantContext() {
   }
 
   return context;
+}
+
+function extractCountsFromUserText(text) {
+  const t = String(text || "").toLowerCase();
+  const out = { passengers: null, bags: null };
+
+  const wordToNumber = (w) => {
+    const s = String(w || "").trim().toLowerCase();
+    const map = {
+      un: 1,
+      une: 1,
+      deux: 2,
+      trois: 3,
+      quatre: 4,
+      cinq: 5,
+      six: 6,
+      sept: 7,
+      huit: 8,
+      neuf: 9,
+      dix: 10,
+    };
+    return Object.prototype.hasOwnProperty.call(map, s) ? map[s] : null;
+  };
+
+  const paxMatch = t.match(/\b(\d{1,2}|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\s*(?:pax|passagers?|personnes?|adultes?|enfants?)\b/);
+  if (paxMatch && paxMatch[1]) {
+    const n = /^\d/.test(paxMatch[1]) ? Number(paxMatch[1]) : wordToNumber(paxMatch[1]);
+    if (Number.isFinite(n) && n > 0 && n < 50) out.passengers = n;
+  }
+
+  const bagMatch = t.match(/\b(\d{1,2}|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\s*(?:valises?|bagages?|sacs?)\b/);
+  if (bagMatch && bagMatch[1]) {
+    const n = /^\d/.test(bagMatch[1]) ? Number(bagMatch[1]) : wordToNumber(bagMatch[1]);
+    if (Number.isFinite(n) && n >= 0 && n < 50) out.bags = n;
+  }
+
+  // Heuristic: two numbers after being asked ("2/3" = 2 pax, 3 bagages)
+  if (out.passengers === null || out.bags === null) {
+    const nums = Array.from(t.matchAll(/\b(\d{1,2})\b/g))
+      .map((m) => Number(m[1]))
+      .filter((n) => Number.isFinite(n))
+      .slice(0, 4);
+    if (nums.length >= 2) {
+      if (out.passengers === null && nums[0] > 0) out.passengers = nums[0];
+      if (out.bags === null && nums[1] >= 0) out.bags = nums[1];
+    }
+  }
+
+  return out;
 }
 
 function buildTripSummaryText() {
@@ -1416,6 +1475,15 @@ function initAiAssistantUI() {
     }
 
     pushHistory("user", message);
+
+    // Persist pax/bags if the user provided them.
+    try {
+      const { passengers, bags } = extractCountsFromUserText(message);
+      if (typeof passengers === "number") _widgetState.aiPassengersCount = passengers;
+      if (typeof bags === "number") _widgetState.aiBagsCount = bags;
+    } catch {
+      // ignore
+    }
 
     // UX: clear immediately, show "Je réfléchis…" inside the field while processing.
     if (input) {

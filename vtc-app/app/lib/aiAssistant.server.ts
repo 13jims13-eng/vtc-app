@@ -581,19 +581,40 @@ function extractCountsFromText(text: string) {
   const t = String(text || "").toLowerCase();
   const out: { passengers: number | null; bags: number | null } = { passengers: null, bags: null };
 
+  const wordToNumber = (w: string) => {
+    const s = String(w || "").trim().toLowerCase();
+    const map: Record<string, number> = {
+      un: 1,
+      une: 1,
+      deux: 2,
+      trois: 3,
+      quatre: 4,
+      cinq: 5,
+      six: 6,
+      sept: 7,
+      huit: 8,
+      neuf: 9,
+      dix: 10,
+    };
+    return Object.prototype.hasOwnProperty.call(map, s) ? map[s] : null;
+  };
+
   // Passengers (pax/personnes/adultes/enfants)
-  const paxMatch = t.match(/\b(\d{1,2})\s*(?:pax|passagers?|personnes?|adultes?|enfants?)\b/);
+  const paxMatch = t.match(/\b(\d{1,2}|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\s*(?:pax|passagers?|personnes?|adultes?|enfants?)\b/);
   if (paxMatch && paxMatch[1]) {
-    const n = Number(paxMatch[1]);
-    if (Number.isFinite(n) && n > 0 && n < 50) out.passengers = n;
+    const n = /^\d/.test(paxMatch[1]) ? Number(paxMatch[1]) : wordToNumber(paxMatch[1]);
+    if (n !== null && Number.isFinite(n) && n > 0 && n < 50) out.passengers = n;
   }
 
   // Bags (valises/bagages/sacs)
-  const bagMatch = t.match(/\b(\d{1,2})\s*(?:valises?|bagages?|sacs?)\b/);
+  const bagMatch = t.match(/\b(\d{1,2}|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\s*(?:valises?|bagages?|sacs?)\b/);
   if (bagMatch && bagMatch[1]) {
-    const n = Number(bagMatch[1]);
-    if (Number.isFinite(n) && n >= 0 && n < 50) out.bags = n;
+    const n = /^\d/.test(bagMatch[1]) ? Number(bagMatch[1]) : wordToNumber(bagMatch[1]);
+    if (n !== null && Number.isFinite(n) && n >= 0 && n < 50) out.bags = n;
   }
+
+  // Heuristic: if the user responds with two numbers like "2/3" or "2 3" after being asked.
+  // We don't apply it blindly here (caller can decide), but keep a helper pattern.
 
   return out;
 }
@@ -615,6 +636,29 @@ function extractCountsFromConversation({ userMessage, history }: { userMessage: 
     if (passengers === null && typeof p === "number") passengers = p;
     if (bags === null && typeof b === "number") bags = b;
     if (passengers !== null && bags !== null) break;
+  }
+
+  // If still missing, apply a small heuristic on the latest user message when the assistant just asked.
+  if (passengers === null || bags === null) {
+    const lastAssistant = Array.isArray(history)
+      ? [...history].reverse().find((h) => h && h.role === "assistant" && typeof h.content === "string")
+      : null;
+    const askedForCounts = lastAssistant
+      ? /passagers?|pax|bagages?|valises?/i.test(String(lastAssistant.content || ""))
+      : false;
+
+    if (askedForCounts) {
+      const msg = String(userMessage || "").trim();
+      const nums = Array.from(msg.matchAll(/\b(\d{1,2})\b/g))
+        .map((m) => Number(m[1]))
+        .filter((n) => Number.isFinite(n))
+        .slice(0, 4);
+      // Accept patterns like "2 3" or "2/3" meaning pax/bags.
+      if (nums.length >= 2) {
+        if (passengers === null && nums[0] > 0) passengers = nums[0];
+        if (bags === null && nums[1] >= 0) bags = nums[1];
+      }
+    }
   }
 
   return { passengers, bags };
@@ -1249,7 +1293,11 @@ export async function callOpenAi({
   }
 
   // Step 2: if options are decided, ask for passengers/bags if missing.
-  const { passengers, bags } = extractCountsFromConversation({ userMessage, history });
+  const fromCtxPassengers = typeof (enrichedContextEarly as UnknownRecord).passengersCount === "number" ? (enrichedContextEarly as UnknownRecord).passengersCount : null;
+  const fromCtxBags = typeof (enrichedContextEarly as UnknownRecord).bagsCount === "number" ? (enrichedContextEarly as UnknownRecord).bagsCount : null;
+  const extracted = extractCountsFromConversation({ userMessage, history });
+  const passengers = typeof fromCtxPassengers === "number" && Number.isFinite(fromCtxPassengers) && fromCtxPassengers > 0 ? fromCtxPassengers : extracted.passengers;
+  const bags = typeof fromCtxBags === "number" && Number.isFinite(fromCtxBags) && fromCtxBags >= 0 ? fromCtxBags : extracted.bags;
   if (optionsDecisionKnown && (passengers === null || bags === null)) {
     const parts = [];
     if (passengers === null) parts.push("Combien de passagers (pax) ?");
