@@ -691,6 +691,16 @@ function applyAssistantMode(mode) {
   const aiPanel = document.getElementById("vtc-ai-assistant");
   if (aiPanel) {
     aiPanel.style.display = m === "classic" ? "none" : "";
+
+    // If the AI panel lives inside the classic container, it becomes invisible when classic UI is hidden.
+    // In AI-only mode, ensure the panel is mounted outside of the hidden classic UI.
+    if (m === "ai" && classic && classic.contains(aiPanel) && classic.insertAdjacentElement) {
+      try {
+        classic.insertAdjacentElement("afterend", aiPanel);
+      } catch {
+        // ignore
+      }
+    }
   }
 
   return m;
@@ -1074,8 +1084,14 @@ function initAiAssistantUI() {
     </div>
   `.trim();
 
+  const mode = getAiAssistantMode();
+  const classicRoot = document.getElementById("vtc-classic-ui");
   const summaryDiv = document.getElementById("vtc-summary");
-  if (summaryDiv && summaryDiv.insertAdjacentElement) {
+
+  // In AI-only mode, the classic container is hidden; mount the panel outside of it.
+  if (mode === "ai" && classicRoot && classicRoot.insertAdjacentElement) {
+    classicRoot.insertAdjacentElement("afterend", panel);
+  } else if (summaryDiv && summaryDiv.insertAdjacentElement) {
     summaryDiv.insertAdjacentElement("afterend", panel);
   } else {
     widget.appendChild(panel);
