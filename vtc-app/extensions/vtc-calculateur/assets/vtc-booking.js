@@ -27,6 +27,10 @@ let _widgetState = {
   aiOptionsDecision: "", // "none" | "some" | ""
 };
 
+function setCustomOptionText(value) {
+  _widgetState.customOptionText = String(value || "").trim();
+}
+
 let _optionsOriginalPlacement = null;
 
 function getWidgetEl() {
@@ -928,6 +932,9 @@ function initAiAssistantUI() {
   const replyEl = panel.querySelector("#vtc-ai-reply");
   const sendEmailBtn = panel.querySelector("#vtc-ai-send-email");
   const whatsappLink = panel.querySelector("#vtc-ai-whatsapp");
+  // Copy buttons were intentionally removed from the UI, but keep null-safe bindings.
+  const copySummaryBtn = panel.querySelector("#vtc-ai-copy-summary");
+  const copyReplyBtn = panel.querySelector("#vtc-ai-copy-reply");
 
   let lastReply = "";
   const chatHistory = [];
@@ -1680,11 +1687,18 @@ function initAiAssistantUI() {
 }
 
 function getCustomOptionTextFromUI() {
-  const raw = document.getElementById("customOption")?.value || "";
-  if (!m) return v;
+  const raw = String(document.getElementById("customOption")?.value || "").trim();
+  if (!raw) return "";
+
+  // If the user types a time-like value, normalize it (floor to 5-minute steps).
+  const m = raw.match(/^\s*(\d{1,2})\s*(?:[:hH])\s*(\d{2})\s*$/);
+  if (!m) return raw;
+
   const hh = Number(m[1]);
   const mm = Number(m[2]);
-  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return v;
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return raw;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return raw;
+
   const floored = Math.floor(mm / 5) * 5;
   const mmStr = String(floored).padStart(2, "0");
   return `${String(hh).padStart(2, "0")}:${mmStr}`;

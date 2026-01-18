@@ -290,6 +290,8 @@ export function buildSystemPrompt() {
     "Règles STRICTES:",
     "- Tu ne recalcules JAMAIS un prix. Tu ne modifies pas le devis.",
     "- Tu utilises uniquement les valeurs du contexte (quote, vehicleQuotes) si elles existent.",
+    "- Confidentialité prix: tu ne révèles JAMAIS la base, le prix/km, les formules, ni les paramètres internes. Tu n'affiches que des totaux.",
+    "- Quand tu annonces un tarif: dis toujours que c'est une estimation et que le chauffeur confirmera la demande et le tarif.",
     "- Si le devis n'existe pas encore, tu demandes les informations manquantes et tu invites à cliquer sur 'Calculer les tarifs'.",
     "- Si vehicleQuotes est présent, tu ANNONCES les tarifs calculés par véhicule dans 'recap' (sans recalcul).",
     "- Tu ne promets jamais la disponibilité ni un prix final garanti.",
@@ -566,7 +568,66 @@ function formatVehicleQuotesBlock(context: UnknownRecord) {
     .slice(0, 12);
 
   if (!rows.length) return "";
-  return ["", "Tarifs (par véhicule):", ...rows].join("\n");
+  return [
+    "",
+    "Tarifs estimatifs (total par véhicule):",
+    ...rows,
+    "",
+    "NB: Ces prix sont des estimations. Le chauffeur confirmera votre demande et le tarif.",
+  ].join("\n");
+}
+
+function redactContextForModel(raw: UnknownRecord): UnknownRecord {
+  const ctx: UnknownRecord = { ...(raw || {}) };
+
+  // Pricing internals must never be exposed to the model.
+  if ("pricingConfig" in ctx) delete ctx.pricingConfig;
+
+  // Defensive: even if the client sends extra fields, keep only non-sensitive vehicle catalog data.
+  if (Array.isArray(ctx.vehiclesCatalog)) {
+    ctx.vehiclesCatalog = (ctx.vehiclesCatalog as unknown[])
+      .map((v) => {
+        const vv = v && typeof v === "object" ? (v as UnknownRecord) : null;
+        if (!vv) return null;
+        const id = clampString(vv.id, 64);
+        const label = clampString(vv.label, 100) || id;
+        const quoteOnly = !!vv.quoteOnly;
+        return id || label ? { id, label, quoteOnly } : null;
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+  }
+
+  // Options catalog is OK (it doesn't contain pricing formula), but clamp anyway.
+  if (Array.isArray(ctx.optionsCatalog)) {
+    ctx.optionsCatalog = (ctx.optionsCatalog as unknown[])
+      .map((o) => {
+        const oo = o && typeof o === "object" ? (o as UnknownRecord) : null;
+        if (!oo) return null;
+        const id = clampString(oo.id, 64);
+        const label = clampString(oo.label, 100) || id;
+        const typeRaw = clampString(oo.type, 24);
+        const type = typeRaw === "percent" ? "percent" : "fixed";
+        const amount = typeof oo.amount === "number" && Number.isFinite(oo.amount) ? oo.amount : 0;
+        return id || label ? { id, label, type, amount } : null;
+      })
+      .filter(Boolean)
+      .slice(0, 20);
+  }
+
+  return ctx;
+}
+
+function answerLooksLikePricingLeak(answer: string) {
+  const a = String(answer || "").toLowerCase();
+  return (
+    a.includes("€/km") ||
+    a.includes("eur/km") ||
+    a.includes("euro/km") ||
+    a.includes("(base") ||
+    a.includes("base)") ||
+    /\bbase\b/.test(a)
+  );
 }
 
 function relaxTransportQuestions({ parsed, userMessage }: { parsed: UnknownRecord; userMessage: string }) {
@@ -734,9 +795,13 @@ function sanitizeFormUpdate(value: unknown, ctx: UnknownRecord): AiAssistantForm
 
 function formatReplyFromModelJson(obj: UnknownRecord, context?: UnknownRecord): string {
   // Prefer a natural-language answer if provided.
-  const answer = typeof obj.answer === "string" ? obj.answer.trim() : "";
+  let answer = typeof obj.answer === "string" ? obj.answer.trim() : "";
   if (answer) {
     const tariffs = context ? formatVehicleQuotesBlock(context) : "";
+    // Safety net: if the model tries to reveal base/€/km, replace with a safe phrasing.
+    if (answerLooksLikePricingLeak(answer)) {
+      answer = "Voici une estimation du prix total pour votre trajet (sans détail de calcul).";
+    }
     return `${answer}${tariffs}`.trim();
   }
 
@@ -980,13 +1045,15 @@ export async function callOpenAi({
     return historyMessages;
   })();
 
+  const safeContext = redactContextForModel(context);
+
   const messages = [
     { role: "system", content: buildSystemPrompt() },
     ...trimmedHistory.map((m) => ({ role: m.role, content: m.content })),
     {
       role: "user",
       content:
-        `Aujourd'hui (ISO): ${todayIso}\nFuseau: Europe/Paris\n\nContexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\nMessage utilisateur:\n${userMessage}`,
+        `Aujourd'hui (ISO): ${todayIso}\nFuseau: Europe/Paris\n\nContexte (ne pas inventer):\n${JSON.stringify({ ...safeContext, webSearch })}\n\nMessage utilisateur:\n${userMessage}`,
     },
   ];
 
@@ -1099,7 +1166,7 @@ export async function callOpenAi({
           .map((m) => `${m.role === "assistant" ? "Assistant" : "Utilisateur"}: ${m.content}`)
           .join("\n")}`
       : "";
-    const input = `Contexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\n${historyText ? historyText + "\n\n" : ""}Message utilisateur:\n${userMessage}`;
+    const input = `Contexte (ne pas inventer):\n${JSON.stringify({ ...safeContext, webSearch })}\n\n${historyText ? historyText + "\n\n" : ""}Message utilisateur:\n${userMessage}`;
     const resp = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
