@@ -1737,6 +1737,19 @@ function parsePickupDateTime(pickupDate, pickupTime) {
   return Number.isFinite(dt.getTime()) ? dt : null;
 }
 
+function normalizeTimeTo5Minutes(value) {
+  const v = String(value || "").trim();
+  if (!v) return v;
+  const m = v.match(/^\s*(\d{1,2})\s*:\s*(\d{2})\s*$/);
+  if (!m) return v;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return v;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return v;
+  const floored = Math.floor(mm / 5) * 5;
+  return `${String(hh).padStart(2, "0")}:${String(floored).padStart(2, "0")}`;
+}
+
 function getLeadTimeInfo({ pickupDate, pickupTime }) {
   const cfg = getWidgetConfig();
   const thresholdMinutes = Math.max(0, parseNumber(cfg.leadTimeThresholdMinutes, 0));
