@@ -1318,6 +1318,22 @@ export async function callOpenAi({
     selectedOptionIds: selectedOptionIdsFromCtx,
   });
 
+  // If the widget explicitly requests a second pass (typically after triggering pricing),
+  // answer deterministically with tariffs when we have them. This avoids relying on the model
+  // to include prices in its prose.
+  if ((context as UnknownRecord).aiSecondPass === true) {
+    const tariffs = formatVehicleQuotesBlock(enrichedContextEarly);
+    if (tariffs) {
+      const when = [pickupDate, pickupTime].filter(Boolean).join(" ");
+      const route = pickup && dropoff ? `de ${pickup} à ${dropoff}` : "pour votre trajet";
+      const intro = when ? `Voici les tarifs estimatifs ${route} le ${when} :` : `Voici les tarifs estimatifs ${route} :`;
+      return {
+        ok: true as const,
+        reply: [intro, tariffs.trim(), "", "Pour continuer, choisissez un véhicule puis cliquez sur ‘Réserver’."].join("\n"),
+      };
+    }
+  }
+
   // Step 1: ask about options once (before asking passengers/bags).
   const hasOptionsCatalog = optionsCatalogLabels.length > 0;
   const hasSelectedOptions =

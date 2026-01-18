@@ -1386,6 +1386,113 @@ function initAiAssistantUI() {
     });
   }
 
+  function setAiAllTariffsCards({ highlightIds } = {}) {
+    if (!suggestionsEl) return;
+    const highlight = new Set((Array.isArray(highlightIds) ? highlightIds : []).map((x) => String(x || "").trim()).filter(Boolean));
+
+    const cfg = typeof getWidgetConfig === "function" ? getWidgetConfig() : null;
+    const vehicles = Array.isArray(cfg?.vehicles) ? cfg.vehicles : [];
+    const quoteMessage = String(cfg?.quoteMessage || "").trim();
+    const currency = String(cfg?.currency || "EUR").trim() || "EUR";
+
+    const vehiclesById = new Map(vehicles.map((v) => [String(v.id || "").trim(), v]));
+    const ctx = buildAiAssistantContext();
+    const quotes = Array.isArray(ctx?.vehicleQuotes) ? ctx.vehicleQuotes : [];
+    if (!quotes.length) {
+      suggestionsEl.style.display = "none";
+      suggestionsEl.innerHTML = "";
+      return;
+    }
+
+    // Sort by computed total (quotes last)
+    const ordered = [...quotes].sort((a, b) => {
+      const aQuote = !!a?.isQuote;
+      const bQuote = !!b?.isQuote;
+      if (aQuote !== bQuote) return aQuote ? 1 : -1;
+      const at = typeof a?.total === "number" ? a.total : Number.POSITIVE_INFINITY;
+      const bt = typeof b?.total === "number" ? b.total : Number.POSITIVE_INFINITY;
+      return at - bt;
+    });
+
+    const cards = [];
+    for (const q of ordered.slice(0, 12)) {
+      const id = String(q?.id || "").trim();
+      if (!id) continue;
+      const v = vehiclesById.get(id);
+      if (!v) continue;
+
+      const label = String(v.label || id).trim() || id;
+      const imageSrc = (String(v.imageUrl || "").trim() || getVehicleDemoImage(id)).trim();
+      const isQuote = !!q?.isQuote;
+      const total = typeof q?.total === "number" && Number.isFinite(q.total) ? q.total : null;
+
+      const right = isQuote || total === null
+        ? `Sur devis${quoteMessage ? ` — <span style="opacity:0.85;">${escapeHtml(quoteMessage)}</span>` : ""}`
+        : `<strong>${Number(total).toFixed(2)} ${escapeHtml(currency)}</strong>`;
+
+      const badge = highlight.has(id) ? '<span style="margin-left:8px;font-size:12px;opacity:0.85;">Recommandé</span>' : "";
+      cards.push(
+        `
+          <div class="vtc-tariff-card" data-vehicle-card="${String(id).replace(/"/g, "&quot;")}">
+            <div class="vtc-tariff-left">
+              <img class="vtc-tariff-image" src="${String(imageSrc).replace(/"/g, "&quot;")}" alt="${String(label).replace(/"/g, "&quot;")}" />
+              <div style="min-width:0;">
+                <div class="vtc-tariff-title">${escapeHtml(label)}${badge}</div>
+                <div class="vtc-tariff-price">${right}</div>
+              </div>
+            </div>
+            <button type="button" class="vtc-tariff-select" data-ai-choose-vehicle="${String(id).replace(/"/g, "&quot;")}">Choisir</button>
+          </div>
+        `.trim(),
+      );
+    }
+
+    if (!cards.length) {
+      suggestionsEl.style.display = "none";
+      suggestionsEl.innerHTML = "";
+      return;
+    }
+
+    suggestionsEl.style.display = "block";
+    suggestionsEl.innerHTML = `
+      <h4 style="margin:12px 0 8px 0;">Tarifs (tous véhicules)</h4>
+      <div class="vtc-tariffs-grid">${cards.join("\n")}</div>
+    `.trim();
+
+    suggestionsEl.querySelectorAll("button[data-ai-choose-vehicle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const vehicleId = String(btn.getAttribute("data-ai-choose-vehicle") || "").trim();
+        if (!vehicleId) return;
+        const applied = applyAiFormUpdate({ vehicleId });
+        if (applied?.changed) {
+          setStatus("Véhicule sélectionné dans le calculateur.");
+          setTimeout(() => setStatus(""), 1800);
+          try {
+            scrollToAnchor("vtc-tariffs");
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
+  }
+
+  async function ensureVehicleQuotesReady({ timeoutMs = 9000 } = {}) {
+    const ctx0 = buildAiAssistantContext();
+    if (Array.isArray(ctx0?.vehicleQuotes) && ctx0.vehicleQuotes.length > 0) return ctx0;
+
+    const triggered = maybeTriggerCalculator();
+    if (!triggered) return null;
+
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const ctx = buildAiAssistantContext();
+      if (Array.isArray(ctx?.vehicleQuotes) && ctx.vehicleQuotes.length > 0) return ctx;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return null;
+  }
+
   function applyInputValueIfEmpty(inputEl, value) {
     if (!inputEl) return false;
     const v = String(value || "").trim();
@@ -1599,7 +1706,12 @@ function initAiAssistantUI() {
     if (sendBtn) sendBtn.setAttribute("disabled", "disabled");
     setStatus("Je réfléchis…");
 
-    const contextBefore = buildAiAssistantContext();
+    const wantsTariffs = /\b(tarif|tarifs|prix)\b/i.test(message);
+
+    // If the user explicitly asks for tariffs, try to compute them first (same as calculator)
+    // so the assistant can immediately show prices.
+    const preCtx = wantsTariffs ? await ensureVehicleQuotesReady({ timeoutMs: 9000 }) : null;
+    const contextBefore = preCtx || buildAiAssistantContext();
     const hadDistanceBefore = typeof contextBefore?.quote?.distance === "number";
     const hadVehicleQuotesBefore = Array.isArray(contextBefore?.vehicleQuotes) && contextBefore.vehicleQuotes.length > 0;
 
@@ -1724,6 +1836,19 @@ function initAiAssistantUI() {
               // ignore
             }
           }
+        }
+      }
+
+      // If the user asked for tariffs, render all vehicle cards when possible.
+      if (wantsTariffs) {
+        try {
+          const ctxNow = buildAiAssistantContext();
+          const hasQuotesNow = Array.isArray(ctxNow?.vehicleQuotes) && ctxNow.vehicleQuotes.length > 0;
+          if (hasQuotesNow) {
+            setAiAllTariffsCards({ highlightIds: lastSuggestedVehicleIds });
+          }
+        } catch {
+          // ignore
         }
       }
 
