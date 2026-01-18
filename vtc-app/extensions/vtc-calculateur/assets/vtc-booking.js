@@ -471,6 +471,10 @@ function injectAiAssistantStylesOnce() {
       border-color: color-mix(in srgb, var(--vtc-ai-accent, #111827) 70%, transparent);
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--vtc-ai-accent, #111827) 18%, transparent);
     }
+    .vtc-ai__input[disabled] {
+      opacity: .72;
+      cursor: wait;
+    }
     .vtc-ai__btn {
       border-radius: var(--vtc-ai-radius, 12px);
       border: 1px solid color-mix(in srgb, var(--vtc-ai-border, rgba(0,0,0,.12)) 100%, transparent);
@@ -514,11 +518,22 @@ function injectAiAssistantStylesOnce() {
       border-radius: var(--vtc-ai-radius, 12px);
       border: 1px solid var(--vtc-ai-border, rgba(0,0,0,.10));
       background: var(--vtc-ai-surface2, rgba(0,0,0,.02));
-      white-space: pre-wrap;
+      white-space: normal;
       font-size: 14px;
       line-height: 1.5;
       color: var(--vtc-ai-text, #111827);
     }
+    .vtc-ai__reply p { margin: 0 0 10px; }
+    .vtc-ai__reply p:last-child { margin-bottom: 0; }
+    .vtc-ai__reply h4 {
+      margin: 10px 0 6px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--vtc-ai-muted, rgba(17,24,39,.72));
+    }
+    .vtc-ai__reply ul { margin: 0 0 10px; padding-left: 18px; }
+    .vtc-ai__reply li { margin: 2px 0; }
     .vtc-ai__actions { display:flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .vtc-ai__rgpd { margin-top: 10px; font-size: 12px; line-height: 1.35; color: var(--vtc-ai-muted, rgba(17,24,39,.74)); }
     .vtc-ai__rgpd a { color: inherit; text-decoration: underline; }
@@ -658,6 +673,53 @@ function buildAiAssistantContext() {
     options,
     vehiclesCatalog,
     optionsCatalog,
+    // Full pricing config (non-sensitive) to allow deterministic server-side quoting
+    // even when the client-side calculator hasn't been filled yet.
+    pricingConfig: cfg
+      ? {
+          stopFee: typeof cfg.stopFee === "number" ? cfg.stopFee : 0,
+          quoteMessage: String(cfg.quoteMessage || "Sur devis — merci de nous contacter.").trim(),
+          pricingBehavior: String(cfg.pricingBehavior || "normal_prices").trim() || "normal_prices",
+          leadTimeThresholdMinutes:
+            typeof cfg.leadTimeThresholdMinutes === "number" ? cfg.leadTimeThresholdMinutes : 120,
+          immediateSurchargeEnabled: !!cfg.immediateSurchargeEnabled,
+          immediateBaseDeltaAmount:
+            typeof cfg.immediateBaseDeltaAmount === "number" ? cfg.immediateBaseDeltaAmount : 0,
+          immediateBaseDeltaPercent:
+            typeof cfg.immediateBaseDeltaPercent === "number" ? cfg.immediateBaseDeltaPercent : 0,
+          immediateTotalDeltaPercent:
+            typeof cfg.immediateTotalDeltaPercent === "number" ? cfg.immediateTotalDeltaPercent : 0,
+          vehicles: (Array.isArray(cfg.vehicles) ? cfg.vehicles : [])
+            .map((v) => {
+              const id = String(v?.id || "").trim();
+              const label = String(v?.label || "").trim();
+              if (!id && !label) return null;
+              return {
+                id,
+                label,
+                baseFare: typeof v?.baseFare === "number" ? v.baseFare : 0,
+                pricePerKm: typeof v?.pricePerKm === "number" ? v.pricePerKm : 0,
+                quoteOnly: !!v?.quoteOnly,
+              };
+            })
+            .filter(Boolean)
+            .slice(0, 12),
+          options: (Array.isArray(cfg.options) ? cfg.options : [])
+            .map((o) => {
+              const id = String(o?.id || "").trim();
+              const label = String(o?.label || "").trim();
+              if (!id && !label) return null;
+              return {
+                id,
+                label,
+                type: String(o?.type || "").trim(),
+                amount: typeof o?.amount === "number" ? o.amount : 0,
+              };
+            })
+            .filter(Boolean)
+            .slice(0, 20),
+        }
+      : undefined,
     aiOptionsAskedOnce: !!_widgetState.aiOptionsAskedOnce,
     aiOptionsDecision: String(_widgetState.aiOptionsDecision || "").trim() || undefined,
     pricingBehavior: String(cfg?.pricingBehavior || "").trim() || undefined,
@@ -1015,6 +1077,8 @@ function initAiAssistantUI() {
     return recognition;
   }
 
+  const defaultInputPlaceholder = input ? String(input.getAttribute("placeholder") || "").trim() : "";
+
   function pushHistory(role, content) {
     const r = role === "assistant" ? "assistant" : "user";
     const c = String(content || "").trim();
@@ -1035,11 +1099,97 @@ function initAiAssistantUI() {
     errorEl.style.display = v ? "block" : "none";
     errorEl.textContent = v;
   }
+
+  function escapeHtml(text) {
+    return String(text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function renderReplyHtml(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return "";
+
+    // If the API ever returns JSON (shouldn't), render it nicely.
+    if (raw.startsWith("{") && raw.endsWith("}")) {
+      try {
+        const obj = JSON.parse(raw);
+        if (obj && typeof obj === "object") {
+          const ans = typeof obj.answer === "string" ? obj.answer.trim() : "";
+          const q = Array.isArray(obj.questionsMissing) ? obj.questionsMissing : [];
+          const r = Array.isArray(obj.recap) ? obj.recap : [];
+          const n = Array.isArray(obj.nextStep) ? obj.nextStep : [];
+
+          const parts = [];
+          if (ans) parts.push(`<p>${escapeHtml(ans)}</p>`);
+
+          const renderList = (title, items) => {
+            const lines = (items || [])
+              .map((x) => (typeof x === "string" ? x.trim() : ""))
+              .filter(Boolean)
+              .slice(0, 12);
+            if (!lines.length) return;
+            parts.push(`<h4>${escapeHtml(title)}</h4>`);
+            parts.push(`<ul>${lines.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ul>`);
+          };
+
+          renderList("Questions", q);
+          renderList("Récap", r);
+          renderList("Prochaine étape", n);
+
+          return parts.join("");
+        }
+      } catch {
+        // fall through
+      }
+    }
+
+    // Lightweight formatting: paragraphs + bullet lists.
+    const lines = raw.split(/\r?\n/);
+    const html = [];
+    let listOpen = false;
+    const flushList = () => {
+      if (!listOpen) return;
+      html.push("</ul>");
+      listOpen = false;
+    };
+
+    for (const line of lines) {
+      const t = String(line || "").trim();
+      if (!t) {
+        flushList();
+        continue;
+      }
+
+      if (t.startsWith("- ")) {
+        if (!listOpen) {
+          html.push("<ul>");
+          listOpen = true;
+        }
+        html.push(`<li>${escapeHtml(t.slice(2))}</li>`);
+        continue;
+      }
+
+      flushList();
+      // Headings like "1) ..." become h4.
+      if (/^\d+\)\s+/.test(t)) {
+        html.push(`<h4>${escapeHtml(t.replace(/^\d+\)\s+/, ""))}</h4>`);
+      } else {
+        html.push(`<p>${escapeHtml(t)}</p>`);
+      }
+    }
+    flushList();
+    return html.join("");
+  }
+
   function setReply(text) {
     if (!replyEl) return;
     const v = String(text || "").trim();
     replyEl.style.display = v ? "block" : "none";
-    replyEl.textContent = v;
+    replyEl.innerHTML = v ? renderReplyHtml(v) : "";
   }
 
   function applyInputValueIfEmpty(inputEl, value) {
@@ -1224,6 +1374,18 @@ function initAiAssistantUI() {
 
     pushHistory("user", message);
 
+    // UX: clear immediately, show "Je réfléchis…" inside the field while processing.
+    if (input) {
+      input.value = "";
+      input.setAttribute("placeholder", "Je réfléchis…");
+      input.setAttribute("disabled", "disabled");
+      try {
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch {
+        // ignore
+      }
+    }
+
     // Stop dictation if active.
     try {
       if (recognition && isListening) recognition.stop();
@@ -1232,7 +1394,7 @@ function initAiAssistantUI() {
     }
 
     if (sendBtn) sendBtn.setAttribute("disabled", "disabled");
-    setStatus("Message enregistré. Analyse en cours…");
+    setStatus("Je réfléchis…");
 
     const contextBefore = buildAiAssistantContext();
     const hadDistanceBefore = typeof contextBefore?.quote?.distance === "number";
@@ -1241,6 +1403,7 @@ function initAiAssistantUI() {
     const body = {
       userMessage: message,
       context: contextBefore,
+      history: Array.isArray(chatHistory) ? chatHistory.slice(-12) : [],
     };
 
     let json = null;
@@ -1332,14 +1495,10 @@ function initAiAssistantUI() {
         }
       }
 
-      // UX: clear the input only AFTER the assistant replied (so the summary can reflect the IA + form updates).
+      // Restore input UX after reply.
       if (input) {
-        input.value = "";
-        try {
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-        } catch {
-          // ignore
-        }
+        input.removeAttribute("disabled");
+        input.setAttribute("placeholder", defaultInputPlaceholder || "");
         try {
           input.focus();
         } catch {
@@ -1356,6 +1515,12 @@ function initAiAssistantUI() {
       return;
     } finally {
       if (sendBtn) sendBtn.removeAttribute("disabled");
+
+      // Ensure input is usable again even on errors.
+      if (input) {
+        input.removeAttribute("disabled");
+        input.setAttribute("placeholder", defaultInputPlaceholder || "");
+      }
     }
   }
 
@@ -1460,6 +1625,19 @@ function initAiAssistantUI() {
         rec.stop();
       } else {
         rec.start();
+
+        // Safety timeout: stop after ~120s to avoid endless sessions (browser-dependent).
+        try {
+          window.setTimeout(() => {
+            try {
+              if (recognition && isListening) recognition.stop();
+            } catch {
+              // ignore
+            }
+          }, 120000);
+        } catch {
+          // ignore
+        }
       }
     } catch {
       setError("Impossible de démarrer la dictée vocale.");
@@ -1497,18 +1675,6 @@ function initAiAssistantUI() {
     }
     whatsappLink.setAttribute("href", url);
 
-        // Safety timeout: stop after ~60s to avoid endless sessions (browser-dependent).
-        try {
-          window.setTimeout(() => {
-            try {
-              if (recognition && isListening) recognition.stop();
-            } catch {
-              // ignore
-            }
-          }, 60000);
-        } catch {
-          // ignore
-        }
     window.open(url, "_blank", "noopener,noreferrer");
   });
 }

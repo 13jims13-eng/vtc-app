@@ -1,5 +1,7 @@
 type UnknownRecord = Record<string, unknown>;
 
+import { computeTariffForVehicle, type TenantPricingConfig } from "./pricing.server";
+
 export type AiAssistantFormUpdate = {
   pickup?: string;
   dropoff?: string;
@@ -12,7 +14,27 @@ export type AiAssistantFormUpdate = {
 export type AiAssistantRequestBody = {
   context: UnknownRecord;
   userMessage: string;
+  history?: { role: "user" | "assistant"; content: string }[];
 };
+
+function sanitizeHistory(raw: unknown) {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out: { role: "user" | "assistant"; content: string }[] = [];
+
+  for (const item of arr) {
+    if (out.length >= 12) break;
+    const obj = item && typeof item === "object" ? (item as UnknownRecord) : null;
+    if (!obj) continue;
+    const roleRaw = typeof obj.role === "string" ? obj.role.trim() : "";
+    const role = roleRaw === "assistant" ? "assistant" : roleRaw === "user" ? "user" : "";
+    if (!role) continue;
+    const content = clampString(obj.content, 900);
+    if (!content) continue;
+    out.push({ role, content });
+  }
+
+  return out;
+}
 
 function parseBooleanEnv(value: unknown) {
   if (typeof value !== "string") return false;
@@ -167,6 +189,71 @@ function pickContext(raw: unknown) {
     .slice(0, 12);
   if (vehicleQuotes.length) extra.vehicleQuotes = vehicleQuotes;
 
+  // Full pricing configuration (non-sensitive) used to compute tariffs server-side.
+  // Kept bounded and sanitized to prevent payload bloat.
+  const pricingCfgRaw = obj.pricingConfig && typeof obj.pricingConfig === "object" ? (obj.pricingConfig as UnknownRecord) : null;
+  if (pricingCfgRaw) {
+    const stopFee = typeof pricingCfgRaw.stopFee === "number" ? pricingCfgRaw.stopFee : 0;
+    const quoteMessage = clampString(pricingCfgRaw.quoteMessage, 180) || "Sur devis — merci de nous contacter.";
+    const pricingBehaviorFull = clampString(pricingCfgRaw.pricingBehavior, 32) || "normal_prices";
+    const pricingBehavior =
+      pricingBehaviorFull === "lead_time_pricing" || pricingBehaviorFull === "all_quote" || pricingBehaviorFull === "normal_prices"
+        ? pricingBehaviorFull
+        : "normal_prices";
+    const leadTimeThresholdMinutes =
+      typeof pricingCfgRaw.leadTimeThresholdMinutes === "number" ? pricingCfgRaw.leadTimeThresholdMinutes : 120;
+
+    const immediateSurchargeEnabled = !!pricingCfgRaw.immediateSurchargeEnabled;
+    const immediateBaseDeltaAmount = typeof pricingCfgRaw.immediateBaseDeltaAmount === "number" ? pricingCfgRaw.immediateBaseDeltaAmount : 0;
+    const immediateBaseDeltaPercent = typeof pricingCfgRaw.immediateBaseDeltaPercent === "number" ? pricingCfgRaw.immediateBaseDeltaPercent : 0;
+    const immediateTotalDeltaPercent = typeof pricingCfgRaw.immediateTotalDeltaPercent === "number" ? pricingCfgRaw.immediateTotalDeltaPercent : 0;
+
+    const vehiclesRaw = Array.isArray(pricingCfgRaw.vehicles) ? (pricingCfgRaw.vehicles as unknown[]) : [];
+    const vehicles = vehiclesRaw
+      .map((v) => {
+        const vv = v && typeof v === "object" ? (v as UnknownRecord) : null;
+        if (!vv) return null;
+        const id = clampString(vv.id, 64);
+        const label = clampString(vv.label, 80);
+        const baseFare = typeof vv.baseFare === "number" ? vv.baseFare : 0;
+        const pricePerKm = typeof vv.pricePerKm === "number" ? vv.pricePerKm : 0;
+        const quoteOnly = !!vv.quoteOnly;
+        if (!id && !label) return null;
+        return { id, label: label || id, baseFare, pricePerKm, quoteOnly };
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+
+    const optionsRaw2 = Array.isArray(pricingCfgRaw.options) ? (pricingCfgRaw.options as unknown[]) : [];
+    const options2 = optionsRaw2
+      .map((o) => {
+        const oo = o && typeof o === "object" ? (o as UnknownRecord) : null;
+        if (!oo) return null;
+        const id = clampString(oo.id, 64);
+        const label = clampString(oo.label, 100);
+        const typeRaw = clampString(oo.type, 24);
+        const type = typeRaw === "percent" ? "percent" : "fixed";
+        const amount = typeof oo.amount === "number" ? oo.amount : 0;
+        if (!id && !label) return null;
+        return { id, label: label || id, type, amount };
+      })
+      .filter(Boolean)
+      .slice(0, 20);
+
+    extra.pricingConfig = {
+      stopFee,
+      quoteMessage,
+      pricingBehavior,
+      leadTimeThresholdMinutes,
+      immediateSurchargeEnabled,
+      immediateBaseDeltaAmount,
+      immediateBaseDeltaPercent,
+      immediateTotalDeltaPercent,
+      vehicles,
+      options: options2,
+    };
+  }
+
   return {
     pickup,
     dropoff,
@@ -188,10 +275,11 @@ export function validateAiAssistantBody(raw: unknown) {
   if (!userMessage) return { ok: false as const, error: "EMPTY_MESSAGE" as const };
 
   const context = pickContext(obj.context);
+  const history = sanitizeHistory(obj.history);
 
   return {
     ok: true as const,
-    value: { userMessage, context },
+    value: { userMessage, context, history },
   };
 }
 
@@ -240,8 +328,245 @@ export function buildSystemPrompt() {
     "  - Si le client ne veut AUCUNE option (ex: 'pas d'options'), tu peux mettre optionIds: [] pour indiquer 'aucune option'.",
     "  - Sinon, si tu n'es pas sûr, n'inclus pas optionIds.",
     "- Ne mets jamais de prix dans formUpdate.",
-    "Rappels: réponses courtes, en français, orientées action.",
+    "Style: ton premium, clair, orienté action. Réponds naturellement dans la langue de l'utilisateur.",
   ].join("\n");
+}
+
+function getGoogleMapsApiKey() {
+  const key = String(process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_API_KEY || "").trim();
+  return key || "";
+}
+
+async function getDrivingKmAndMinutes(opts: { origin: string; destination: string }) {
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) return { ok: false as const, error: "GOOGLE_NOT_CONFIGURED" as const };
+
+  const origin = opts.origin.trim();
+  const destination = opts.destination.trim();
+  if (!origin || !destination) return { ok: false as const, error: "MISSING_ADDRESSES" as const };
+
+  const url =
+    "https://maps.googleapis.com/maps/api/directions/json" +
+    `?origin=${encodeURIComponent(origin)}` +
+    `&destination=${encodeURIComponent(destination)}` +
+    `&mode=driving` +
+    `&language=fr` +
+    `&key=${encodeURIComponent(apiKey)}`;
+
+  const resp = await fetch(url, { method: "GET" });
+  const text = await resp.text().catch(() => "");
+  if (!resp.ok) {
+    return {
+      ok: false as const,
+      error: "GOOGLE_DIRECTIONS_FAILED" as const,
+      status: resp.status,
+      detail: text ? text.slice(0, 400) : null,
+    };
+  }
+
+  const data = (() => {
+    try {
+      return text ? (JSON.parse(text) as UnknownRecord) : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const status = typeof data?.status === "string" ? data.status : "";
+  if (status && status !== "OK") {
+    return {
+      ok: false as const,
+      error: "GOOGLE_DIRECTIONS_STATUS" as const,
+      status,
+      detail: typeof data?.error_message === "string" ? data.error_message.slice(0, 260) : null,
+    };
+  }
+
+  const routes = Array.isArray(data?.routes) ? (data?.routes as UnknownRecord[]) : [];
+  const firstRoute = routes[0] && typeof routes[0] === "object" ? (routes[0] as UnknownRecord) : null;
+  const legs = Array.isArray(firstRoute?.legs) ? (firstRoute.legs as UnknownRecord[]) : [];
+  if (!legs.length) return { ok: false as const, error: "NO_ROUTE" as const };
+
+  let meters = 0;
+  let seconds = 0;
+  for (const leg of legs) {
+    const dVal = (leg?.distance && typeof leg.distance === "object" ? (leg.distance as UnknownRecord).value : null) as unknown;
+    const tVal = (leg?.duration && typeof leg.duration === "object" ? (leg.duration as UnknownRecord).value : null) as unknown;
+    const m = typeof dVal === "number" ? dVal : 0;
+    const s = typeof tVal === "number" ? tVal : 0;
+    if (Number.isFinite(m)) meters += m;
+    if (Number.isFinite(s)) seconds += s;
+  }
+
+  const km = meters / 1000;
+  const minutes = seconds / 60;
+  if (!Number.isFinite(km) || km <= 0) return { ok: false as const, error: "INVALID_DISTANCE" as const };
+
+  return { ok: true as const, km, minutes: Number.isFinite(minutes) ? minutes : null };
+}
+
+function ensureRouteClarification({
+  parsed,
+  routeError,
+  pickup,
+  dropoff,
+}: {
+  parsed: UnknownRecord;
+  routeError: { error: string; status?: unknown };
+  pickup: string;
+  dropoff: string;
+}) {
+  const existingRaw = Array.isArray(parsed.questionsMissing) ? (parsed.questionsMissing as unknown[]) : [];
+  const existing = existingRaw
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean);
+
+  const already = existing.some((s) => {
+    const t = s.toLowerCase();
+    return t.includes("préciser") && (t.includes("adresse") || t.includes("départ") || t.includes("arrivée"));
+  });
+  if (already) return;
+
+  const isShort = (s: string) => {
+    const v = String(s || "").trim();
+    if (!v) return true;
+    if (v.length < 8) return true;
+    // Heuristic: a single token like "CDG" / "Paris" is likely ambiguous.
+    const tokens = v.split(/\s+/).filter(Boolean);
+    return tokens.length <= 1;
+  };
+
+  const needsPickup = isShort(pickup);
+  const needsDropoff = isShort(dropoff);
+
+  const base =
+    routeError.error === "GOOGLE_NOT_CONFIGURED"
+      ? "Je ne peux pas calculer automatiquement l’itinéraire pour le moment (service de calcul indisponible)."
+      : "Je n’arrive pas à calculer l’itinéraire avec ces informations.";
+
+  const ask = (() => {
+    const parts: string[] = [];
+    parts.push(base);
+    parts.push(
+      "Pouvez-vous préciser les adresses avec au minimum : numéro + rue, ville, code postal (et pays si hors France) ?",
+    );
+
+    // Targeted hints
+    parts.push(
+      "Si c’est un aéroport/gare : indiquez le terminal/porte (ou nom exact), et si vous avez une préférence (dépose minute / arrivée / départ).",
+    );
+
+    if (needsPickup || needsDropoff) {
+      const which = [
+        needsPickup ? "départ" : "",
+        needsDropoff ? "arrivée" : "",
+      ]
+        .filter(Boolean)
+        .join(" et ");
+      parts.push(`En priorité : précisez l’adresse de ${which}.`);
+    }
+
+    // Help the user answer fast.
+    parts.push(
+      "Exemple : “12 rue de Rivoli, 75004 Paris” → “Terminal 2E, Aéroport CDG, 95700 Roissy-en-France”.",
+    );
+    return parts.join(" ").trim();
+  })();
+
+  parsed.questionsMissing = [ask, ...existing].slice(0, 7);
+
+  // Also keep the next step actionable.
+  const nextRaw = Array.isArray(parsed.nextStep) ? (parsed.nextStep as unknown[]) : [];
+  const next = nextRaw
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean);
+  const hasNext = next.some((s) => s.toLowerCase().includes("adresse") || s.toLowerCase().includes("précis"));
+  if (!hasNext) {
+    parsed.nextStep = ["Donnez les adresses complètes (départ/arrivée) pour que je calcule les tarifs.", ...next].slice(0, 7);
+  }
+}
+
+function sanitizePricingConfig(value: unknown): TenantPricingConfig | null {
+  const obj = value && typeof value === "object" ? (value as UnknownRecord) : null;
+  if (!obj) return null;
+
+  const pricingBehaviorRaw = typeof obj.pricingBehavior === "string" ? obj.pricingBehavior.trim() : "";
+  const pricingBehavior: TenantPricingConfig["pricingBehavior"] =
+    pricingBehaviorRaw === "lead_time_pricing" || pricingBehaviorRaw === "all_quote" || pricingBehaviorRaw === "normal_prices"
+      ? pricingBehaviorRaw
+      : "normal_prices";
+
+  const vehicles: TenantPricingConfig["vehicles"] = [];
+  const vehiclesRaw = Array.isArray(obj.vehicles) ? (obj.vehicles as unknown[]) : [];
+  for (const v of vehiclesRaw) {
+    if (vehicles.length >= 12) break;
+    const vv = v && typeof v === "object" ? (v as UnknownRecord) : null;
+    if (!vv) continue;
+    const id = clampString(vv.id, 64);
+    if (!id) continue;
+    const label = clampString(vv.label, 80) || id;
+    const baseFare = typeof vv.baseFare === "number" && Number.isFinite(vv.baseFare) ? vv.baseFare : 0;
+    const pricePerKm = typeof vv.pricePerKm === "number" && Number.isFinite(vv.pricePerKm) ? vv.pricePerKm : 0;
+    const quoteOnly = !!vv.quoteOnly;
+    vehicles.push({ id, label, baseFare, pricePerKm, quoteOnly });
+  }
+
+  const options: TenantPricingConfig["options"] = [];
+  const optionsRaw = Array.isArray(obj.options) ? (obj.options as unknown[]) : [];
+  for (const o of optionsRaw) {
+    if (options.length >= 20) break;
+    const oo = o && typeof o === "object" ? (o as UnknownRecord) : null;
+    if (!oo) continue;
+    const id = clampString(oo.id, 64);
+    if (!id) continue;
+    const label = clampString(oo.label, 100) || id;
+    const typeRaw = clampString(oo.type, 24);
+    const type = typeRaw === "percent" ? "percent" : "fixed";
+    const amount = typeof oo.amount === "number" && Number.isFinite(oo.amount) ? oo.amount : 0;
+    options.push({ id, label, type, amount });
+  }
+
+  return {
+    stopFee: typeof obj.stopFee === "number" && Number.isFinite(obj.stopFee) ? obj.stopFee : 0,
+    quoteMessage: clampString(obj.quoteMessage, 180) || "Sur devis — merci de nous contacter.",
+    pricingBehavior,
+    leadTimeThresholdMinutes:
+      typeof obj.leadTimeThresholdMinutes === "number" && Number.isFinite(obj.leadTimeThresholdMinutes) ? obj.leadTimeThresholdMinutes : 120,
+    immediateSurchargeEnabled: !!obj.immediateSurchargeEnabled,
+    immediateBaseDeltaAmount:
+      typeof obj.immediateBaseDeltaAmount === "number" && Number.isFinite(obj.immediateBaseDeltaAmount) ? obj.immediateBaseDeltaAmount : 0,
+    immediateBaseDeltaPercent:
+      typeof obj.immediateBaseDeltaPercent === "number" && Number.isFinite(obj.immediateBaseDeltaPercent) ? obj.immediateBaseDeltaPercent : 0,
+    immediateTotalDeltaPercent:
+      typeof obj.immediateTotalDeltaPercent === "number" && Number.isFinite(obj.immediateTotalDeltaPercent) ? obj.immediateTotalDeltaPercent : 0,
+    vehicles,
+    options,
+  };
+}
+
+function formatVehicleQuotesBlock(context: UnknownRecord) {
+  const vehicleQuotesRaw = Array.isArray(context.vehicleQuotes) ? (context.vehicleQuotes as unknown[]) : [];
+  if (!vehicleQuotesRaw.length) return "";
+
+  const currency = typeof context.currency === "string" && context.currency.trim() ? context.currency.trim() : "EUR";
+
+  const rows = vehicleQuotesRaw
+    .map((q) => {
+      const qq = q && typeof q === "object" ? (q as UnknownRecord) : null;
+      if (!qq) return "";
+      const label = clampString(qq.label, 80) || clampString(qq.id, 64);
+      const isQuote = !!qq.isQuote;
+      const total = typeof qq.total === "number" && Number.isFinite(qq.total) ? qq.total : null;
+      if (!label) return "";
+      if (isQuote) return `- ${label}: sur devis`;
+      if (typeof total === "number") return `- ${label}: ${total.toFixed(2)} ${currency}`;
+      return "";
+    })
+    .filter(Boolean)
+    .slice(0, 12);
+
+  if (!rows.length) return "";
+  return ["", "Tarifs (par véhicule):", ...rows].join("\n");
 }
 
 function relaxTransportQuestions({ parsed, userMessage }: { parsed: UnknownRecord; userMessage: string }) {
@@ -407,10 +732,13 @@ function sanitizeFormUpdate(value: unknown, ctx: UnknownRecord): AiAssistantForm
   return Object.keys(out).length ? out : null;
 }
 
-function formatReplyFromModelJson(obj: UnknownRecord): string {
+function formatReplyFromModelJson(obj: UnknownRecord, context?: UnknownRecord): string {
   // Prefer a natural-language answer if provided.
   const answer = typeof obj.answer === "string" ? obj.answer.trim() : "";
-  if (answer) return answer;
+  if (answer) {
+    const tariffs = context ? formatVehicleQuotesBlock(context) : "";
+    return `${answer}${tariffs}`.trim();
+  }
 
   const q = Array.isArray(obj.questionsMissing) ? obj.questionsMissing : [];
   const r = Array.isArray(obj.recap) ? obj.recap : [];
@@ -609,9 +937,11 @@ async function webSearchSerper(query: string) {
 export async function callOpenAi({
   userMessage,
   context,
+  history,
 }: {
   userMessage: string;
   context: UnknownRecord;
+  history?: { role: "user" | "assistant"; content: string }[];
 }) {
   const apiKey = (process.env.OPENAI_API_KEY || "").trim();
   if (!apiKey) {
@@ -638,8 +968,21 @@ export async function callOpenAi({
   }
 
   const todayIso = new Date().toISOString().slice(0, 10);
+
+  const historyMessages = Array.isArray(history) ? history : [];
+  // Avoid duplicating the current message if the client included it in history.
+  const trimmedHistory = (() => {
+    if (!historyMessages.length) return [];
+    const last = historyMessages[historyMessages.length - 1];
+    if (last && last.role === "user" && String(last.content || "").trim() === userMessage.trim()) {
+      return historyMessages.slice(0, -1);
+    }
+    return historyMessages;
+  })();
+
   const messages = [
     { role: "system", content: buildSystemPrompt() },
+    ...trimmedHistory.map((m) => ({ role: m.role, content: m.content })),
     {
       role: "user",
       content:
@@ -751,7 +1094,12 @@ export async function callOpenAi({
   }
 
   async function callResponses(modelToUse: string) {
-    const input = `Contexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\nMessage utilisateur:\n${userMessage}`;
+    const historyText = trimmedHistory.length
+      ? `Historique (récent en dernier):\n${trimmedHistory
+          .map((m) => `${m.role === "assistant" ? "Assistant" : "Utilisateur"}: ${m.content}`)
+          .join("\n")}`
+      : "";
+    const input = `Contexte (ne pas inventer):\n${JSON.stringify({ ...context, webSearch })}\n\n${historyText ? historyText + "\n\n" : ""}Message utilisateur:\n${userMessage}`;
     const resp = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -878,9 +1226,82 @@ export async function callOpenAi({
   if (parsed) {
     relaxTransportQuestions({ parsed, userMessage });
     ensureOptionsQuestion({ parsed, context });
-    ensureVehicleQuotesInRecap({ parsed, context });
     const formUpdate = sanitizeFormUpdate(parsed.formUpdate, context);
-    const reply = formatReplyFromModelJson(parsed);
+
+    // If we have enough data, compute distance+tariffs server-side and expose them as vehicleQuotes.
+    let enrichedContext: UnknownRecord = context;
+    try {
+      const pricingConfig = sanitizePricingConfig((context as UnknownRecord).pricingConfig);
+      const pickup = clampString(formUpdate?.pickup ?? context.pickup, 220);
+      const dropoff = clampString(formUpdate?.dropoff ?? context.dropoff, 220);
+      const pickupDate = clampString(formUpdate?.pickupDate ?? context.date, 32);
+      const pickupTime = clampString(formUpdate?.pickupTime ?? context.time, 16);
+      const stopsCount = typeof context.stopsCount === "number" ? Math.max(0, context.stopsCount) : 0;
+      const selectedOptionIds = Array.isArray(formUpdate?.optionIds) ? formUpdate?.optionIds : [];
+
+      if (pricingConfig && pickup && dropoff) {
+        const dir = await getDrivingKmAndMinutes({ origin: pickup, destination: dropoff });
+        if (dir.ok) {
+          const vehicleQuotes = (pricingConfig.vehicles || [])
+            .map((v) => {
+              const result = computeTariffForVehicle(pricingConfig, {
+                km: dir.km,
+                stopsCount,
+                pickupDate: pickupDate || "",
+                pickupTime: pickupTime || "",
+                vehicleId: v.id,
+                selectedOptionIds: selectedOptionIds || [],
+              });
+
+              if (!result.ok) return null;
+              if (result.isQuote) {
+                return { id: result.vehicleId, label: result.vehicleLabel, isQuote: true, total: null };
+              }
+              return {
+                id: result.vehicleId,
+                label: result.vehicleLabel,
+                isQuote: false,
+                total: typeof result.total === "number" && Number.isFinite(result.total) ? result.total : null,
+              };
+            })
+            .filter(Boolean)
+            .slice(0, 12);
+
+          enrichedContext = {
+            ...context,
+            vehicleQuotes,
+            quote: {
+              ...(context.quote && typeof context.quote === "object" ? (context.quote as UnknownRecord) : {}),
+              distance: dir.km,
+              duration: typeof dir.minutes === "number" ? dir.minutes : null,
+            },
+          };
+        } else {
+          // Provide an actionable fallback instead of silently failing.
+          ensureRouteClarification({
+            parsed,
+            routeError: { error: String((dir as UnknownRecord).error || "ROUTE_FAILED"), status: (dir as UnknownRecord).status },
+            pickup,
+            dropoff,
+          });
+
+          // Operator diagnostics (Render logs). Avoid logging full addresses.
+          try {
+            console.warn("ai-assistant route compute failed", {
+              error: (dir as UnknownRecord).error,
+              status: (dir as UnknownRecord).status,
+            });
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } catch {
+      enrichedContext = context;
+    }
+
+    ensureVehicleQuotesInRecap({ parsed, context: enrichedContext });
+    const reply = formatReplyFromModelJson(parsed, enrichedContext);
     return { ok: true as const, reply, formUpdate };
   }
 
