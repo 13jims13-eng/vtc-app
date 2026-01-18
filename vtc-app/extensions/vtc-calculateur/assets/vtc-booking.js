@@ -828,7 +828,37 @@ function buildTripSummaryText() {
 function buildWhatsAppUrl(text) {
   const msg = String(text || "").trim();
   if (!msg) return "";
-  return `https://wa.me/?text=${encodeURIComponent(msg)}`;
+
+  const dataset = getWidgetDataset();
+  const rawTarget = String(dataset.whatsappUrl || "").trim() || "+33768889968";
+
+  const normalizePhone = (value) => {
+    const digits = String(value || "").replace(/[^0-9]/g, "");
+    if (!digits) return "";
+    // Helpful FR default: if user entered a local 10-digit number starting with 0, convert to +33 format.
+    if (digits.length === 10 && digits.startsWith("0")) return `33${digits.slice(1)}`;
+    return digits;
+  };
+
+  const resolveBaseUrl = () => {
+    if (!rawTarget) return "https://wa.me/";
+    if (/^https?:\/\//i.test(rawTarget)) return rawTarget;
+
+    const phone = normalizePhone(rawTarget);
+    if (!phone) return "https://wa.me/";
+    return `https://wa.me/${phone}`;
+  };
+
+  const base = resolveBaseUrl();
+  try {
+    const u = new URL(base);
+    // For standard WhatsApp URLs, `text` pre-fills the message.
+    u.searchParams.set("text", msg);
+    return u.toString();
+  } catch {
+    const sep = base.includes("?") ? "&" : "?";
+    return `${base}${sep}text=${encodeURIComponent(msg)}`;
+  }
 }
 
 function initAiAssistantUI() {
@@ -846,12 +876,12 @@ function initAiAssistantUI() {
     <div class="vtc-ai__header">
       <div>
         <div class="vtc-ai__title">Assistant IA</div>
-        <div class="vtc-ai__badge">Conseils + aide réservation (tarifs du calculateur, sans recalcul IA)</div>
+        <div class="vtc-ai__badge">Conseils et réservation en 3 clics</div>
       </div>
     </div>
     <div class="vtc-ai__body">
       <div class="vtc-ai__row">
-        <textarea id="vtc-ai-input" class="vtc-ai__input" placeholder="Ex: Je suis 2 adultes + 2 valises, quel véhicule me conseillez-vous ?"></textarea>
+        <textarea id="vtc-ai-input" class="vtc-ai__input" placeholder="Dites-nous : prise en charge, heure, dépose, passagers, bagages…"></textarea>
         <button id="vtc-ai-mic" class="vtc-ai__btn vtc-ai__btn--subtle vtc-ai__btn--icon" type="button" title="Dicter un message" aria-label="Dicter un message">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/>
@@ -1884,7 +1914,8 @@ function getWidgetConfig() {
   const quoteMessage = String(
     rawCfg?.quoteMessage || dataset.quoteMessage || "Sur devis — merci de nous contacter.",
   ).trim();
-  const slackEnabled = parseBoolean(dataset.slackEnabled, true);
+  // Slack settings were removed from the theme block; keep Slack disabled from the widget.
+  const slackEnabled = false;
 
   const optionsDisplayMode = normalizeOptionsDisplayMode(
     rawCfg?.optionsDisplayMode || dataset.optionsDisplayMode,
@@ -3549,9 +3580,7 @@ document.addEventListener("DOMContentLoaded", () => {
         config: {
           bookingEmailTo:
             (getWidgetDataset().bookingEmailTo || "").trim() || undefined,
-          slackEnabled: getWidgetConfig().slackEnabled,
-          slackDestination:
-            (getWidgetDataset().slackDestination || "").trim() || undefined,
+          slackEnabled: false,
         },
       };
 

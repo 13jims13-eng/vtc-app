@@ -110,8 +110,7 @@
     data-google-maps-api-key="{{ block.settings.google_maps_api_key | escape }}"
     data-stop-fee="{{ block.settings.stop_fee }}"
     data-quote-message="{{ block.settings.quote_message | escape }}"
-    data-slack-enabled="{{ block.settings.slack_enabled }}"
-    data-slack-destination="{{ block.settings.slack_destination | escape }}"
+    data-whatsapp-url="{{ block.settings.whatsapp_url | escape }}"
     data-options-display-mode="{{ options_display_mode }}"
     data-options-config='{{ options_config_json | strip_newlines | escape }}'
     data-config='{{ widget_config_json | strip_newlines | escape }}'
@@ -510,22 +509,11 @@
             "info": "Optionnel (non secret) : destinataire de l'email de réservation. Si vide, l'app utilise BOOKING_EMAIL_TO (env)."
         },
         {
-            "type": "checkbox",
-            "id": "slack_enabled",
-            "label": "Slack activé",
-            "default": true
-        },
-        {
-                        "type": "select",
-                        "id": "slack_destination",
-                        "label": "Destination Slack (optionnel)",
-                        "info": "Destination non sensible. Le webhook est configuré dans l’admin de l’app.",
-                        "default": "devis",
-                        "options": [
-                            { "value": "devis", "label": "devis" },
-                            { "value": "reservations", "label": "reservations" },
-                            { "value": "support", "label": "support" }
-                        ]
+            "type": "text",
+            "id": "whatsapp_url",
+            "label": "WhatsApp (URL ou numéro)",
+            "info": "Optionnel : URL complète (ex: https://wa.me/33612345678) ou numéro (ex: +33612345678). Utilisé par le bouton WhatsApp de l’assistant.",
+            "default": "+33768889968"
         }
   ]
 }
