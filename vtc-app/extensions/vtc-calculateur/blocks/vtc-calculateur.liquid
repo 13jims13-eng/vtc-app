@@ -1,7 +1,13 @@
 {% assign vtc_booking_email_to = block.settings.booking_email_to | strip %}
 
-{% assign assistant_mode = block.settings.assistant_mode | default: 'both' | strip %}
-{% if assistant_mode == blank %}{% assign assistant_mode = 'both' %}{% endif %}
+{%- comment -%}
+    IMPORTANT: `assistant_mode` existed historically in some shops with values like "A".
+    We now use `assistant_ui_mode` to avoid collisions and keep the UI consistent.
+{%- endcomment -%}
+{% assign assistant_mode_new = block.settings.assistant_ui_mode | strip %}
+{% assign assistant_mode_legacy = block.settings.assistant_mode | strip %}
+{% assign assistant_mode = assistant_mode_new | default: assistant_mode_legacy | default: 'both' | strip %}
+{% if assistant_mode != 'classic' and assistant_mode != 'ai' and assistant_mode != 'both' %}{% assign assistant_mode = 'both' %}{% endif %}
 
 {% comment %}Vehicles JSON config (preferred by vtc-booking.js).{% endcomment %}
 {% assign display_mode = block.settings.display_mode | strip %}
@@ -295,7 +301,7 @@
                 },
                 {
                     "type": "select",
-                    "id": "assistant_mode",
+                    "id": "assistant_ui_mode",
                     "label": "Affichage",
                     "default": "both",
                     "options": [

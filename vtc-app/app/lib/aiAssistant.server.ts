@@ -107,6 +107,7 @@ function pickContext(raw: unknown) {
   const date = clampString(obj.date, 32);
   const time = clampString(obj.time, 16);
   const vehicle = clampString(obj.vehicle, 80);
+  const vehicleId = clampString(obj.vehicleId, 64);
   const currency = clampString(obj.currency, 8) || "EUR";
 
   const optionsRaw = Array.isArray(obj.options) ? obj.options : [];
@@ -278,6 +279,7 @@ function pickContext(raw: unknown) {
     date,
     time,
     vehicle,
+    vehicleId,
     currency,
     options,
     quote,
@@ -310,13 +312,17 @@ export function buildSystemPrompt() {
     "- Tu utilises uniquement les valeurs du contexte (quote, vehicleQuotes) si elles existent.",
     "- Confidentialité prix: tu ne révèles JAMAIS la base, le prix/km, les formules, ni les paramètres internes. Tu n'affiches que des totaux.",
     "- Quand tu annonces un tarif: dis toujours que c'est une estimation et que le chauffeur confirmera la demande et le tarif.",
-    "- Si les tarifs ne sont pas encore disponibles (vehicleQuotes absent), tu demandes les informations manquantes pour pouvoir donner une estimation (départ, arrivée, date, heure, passagers, bagages, options).",
+    "- Procédure de réservation: (1) départ + arrivée + date + heure, (2) arrêt(s)/aller-retour si mentionné, (3) options (ou aucune), (4) passagers + bagages, (5) récap + tarifs si disponibles.",
+    "- Si les tarifs ne sont pas encore disponibles (vehicleQuotes absent), tu demandes les informations manquantes (départ, arrivée, date, heure, passagers, bagages, options).",
     "- Tu ne mentionnes JAMAIS un calculateur, un bouton, ni une action du type “cliquez sur …”.",
+    "- Interprétation: un nombre dans une date/heure (ex: 'le 20', '14h30') n'est PAS un nombre de passagers/bagages sans mots-clés (pax, passagers, bagages, valises, etc.).",
+    "- Mots-clés à comprendre: prise en charge/départ/origine, arrivée/destination/dépose, arrêt/stop/escale, retour/aller-retour.",
     "- Si vehicleQuotes est présent, tu ANNONCES les tarifs calculés par véhicule dans 'recap' (sans recalcul).",
     "- Tu ne promets jamais la disponibilité ni un prix final garanti.",
     "- Tu respectes la confidentialité: ne demande pas de données inutiles.",
     "- Tu NE PROPOSES JAMAIS d'autres chauffeurs, plateformes, comparateurs ou sites web.",
     "- Tu recommandes uniquement des véhicules/options présents dans le contexte (vehiclesCatalog/optionsCatalog).",
+    "- Si le client choisit un véhicule non adapté (places/bagages), tu l'avertis et tu proposes un véhicule plus adapté; tu peux préciser que le chauffeur pourra adapter le véhicule si nécessaire.",
     "- Si optionsCatalog n'est pas vide et que le client n'a pas exprimé de préférence, demande: options ou aucune option.",
     "- Si l'utilisateur parle d'un vol/train, tu peux aider à préparer la réservation (marge, terminal/gare).",
     "  - IMPORTANT: le numéro de vol/train est OPTIONNEL. Ne bloque jamais la réservation dessus.",
@@ -668,6 +674,35 @@ function extractCountsFromConversation({ userMessage, history }: { userMessage: 
 
     if (askedForCounts) {
       const msg = String(userMessage || "").trim();
+
+      // Prefer explicit shorthand first.
+      const slash = msg.match(/\b(\d{1,2})\s*\/\s*(\d{1,2})\b/);
+      if (slash && (passengers === null || bags === null)) {
+        const p = Number(slash[1]);
+        const b = Number(slash[2]);
+        if (passengers === null && Number.isFinite(p) && p > 0 && p < 50) passengers = p;
+        if (bags === null && Number.isFinite(b) && b >= 0 && b < 50) bags = b;
+      }
+
+      const looksLikeDateOrTime = (() => {
+        const m = msg.toLowerCase();
+        if (/^\s*\d{1,2}\s*\/\s*\d{1,2}\s*$/.test(m)) return false;
+        if (/\b(pax|passagers?|personnes?|adultes?|enfants?|bagages?|valises?|sacs?)\b/i.test(m)) return false;
+
+        const month = /(janv|janvier|fevr|févr|fevrier|février|mars|avr|avril|mai|juin|juil|juillet|aout|août|sept|septembre|oct|octobre|nov|novembre|dec|déc|decembre|décembre)/;
+        if (month.test(m)) return true;
+        if (/\b\d{4}-\d{1,2}-\d{1,2}\b/.test(m)) return true;
+        if (/\b\d{1,2}\s*[.-]\s*\d{1,2}\b/.test(m)) return true;
+        if (/\b\d{1,2}\s*\/\s*\d{1,2}\b/.test(m)) return true;
+        if (/\b\d{1,2}\s*h\s*\d{0,2}\b/.test(m)) return true;
+        if (/\b\d{1,2}:\d{2}\b/.test(m)) return true;
+        if (/\ble\s+\d{1,2}\b/.test(m)) return true;
+        return false;
+      })();
+
+      // Avoid misreading date/time like "le 20 à 14h" as pax/bags.
+      if (looksLikeDateOrTime) return { passengers, bags };
+
       const nums = Array.from(msg.matchAll(/\b(\d{1,2})\b/g))
         .map((m) => Number(m[1]))
         .filter((n) => Number.isFinite(n))
@@ -746,6 +781,41 @@ function inferCapacityFromLabel(label: string) {
 function isVanLike(label: string) {
   const s = String(label || "").toLowerCase();
   return s.includes("van") || s.includes("minibus") || s.includes("mini bus") || s.includes("minivan");
+}
+
+function buildVehicleFitWarning({
+  vehicleId,
+  vehicleQuotes,
+  passengers,
+  bags,
+}: {
+  vehicleId: string;
+  vehicleQuotes: { id: string; label: string }[];
+  passengers: number;
+  bags: number | null;
+}) {
+  const vid = String(vehicleId || "").trim();
+  if (!vid) return "";
+  const v = vehicleQuotes.find((q) => q.id === vid);
+  if (!v) return "";
+
+  const label = String(v.label || "").trim() || vid;
+  const cap = inferCapacityFromLabel(label);
+  const vanLike = isVanLike(label);
+
+  const bagsNum = typeof bags === "number" && Number.isFinite(bags) ? bags : null;
+  const likelyManyBags = bagsNum !== null && (bagsNum >= 4 || (bagsNum >= 3 && bagsNum >= passengers));
+
+  if (typeof cap === "number" && cap > 0 && passengers > cap) {
+    return `Attention: ${label} semble limité à ${cap} place(s). Avec ${passengers} passagers, je recommande un véhicule plus grand (van/minivan). Le chauffeur pourra adapter le véhicule si besoin.`;
+  }
+
+  if (!vanLike && likelyManyBags) {
+    const bagsTxt = bagsNum !== null ? `${bagsNum} bagage(s)` : "plusieurs bagages";
+    return `Attention: avec ${passengers} passagers et ${bagsTxt}, une berline peut être juste. Un van/minivan sera plus adapté; le chauffeur pourra adapter le véhicule si besoin.`;
+  }
+
+  return "";
 }
 
 function recommendVehicles({ vehicleQuotes, passengers, bags }: { vehicleQuotes: { id?: string; label?: string; isQuote?: boolean; total?: number | null }[]; passengers: number; bags: number | null }) {
@@ -1317,6 +1387,27 @@ export async function callOpenAi({
   const pickupDate = clampString((context as UnknownRecord).date, 32);
   const pickupTime = clampString((context as UnknownRecord).time, 16);
 
+  // Step 0: booking procedure — we need the base itinerary before asking anything else.
+  // Without these, tariffs are unreliable (lead-time pricing, stops, etc.).
+  if (!pickup || !dropoff || !pickupDate || !pickupTime) {
+    const missing: string[] = [];
+    if (!pickup) missing.push("- Départ / prise en charge");
+    if (!dropoff) missing.push("- Arrivée / destination");
+    if (!pickupDate) missing.push("- Date");
+    if (!pickupTime) missing.push("- Heure");
+
+    return {
+      ok: true as const,
+      reply: [
+        "Pour vous donner les tarifs, j’ai besoin de :",
+        ...missing,
+        "",
+        "Vous pouvez répondre en une phrase, ex: ‘Départ: … / Arrivée: … / le 20 janvier / 14h30’.",
+        "(S’il y a un arrêt ou un aller-retour, dites-le aussi.)",
+      ].join("\n"),
+    };
+  }
+
   // Enrich with server-side quotes early so we can always show tariffs even if the model returns plain text.
   const enrichedContextEarly = await maybeEnrichContextWithVehicleQuotes({
     context: { ...context, aiOptionsDecision: effectiveOptionsDecision || undefined },
@@ -1338,7 +1429,7 @@ export async function callOpenAi({
       const intro = when ? `Voici les tarifs estimatifs ${route} le ${when} :` : `Voici les tarifs estimatifs ${route} :`;
       return {
         ok: true as const,
-        reply: [intro, tariffs.trim(), "", "Pour continuer, choisissez un véhicule puis cliquez sur ‘Réserver’."].join("\n"),
+        reply: [intro, tariffs.trim(), "", "Pour continuer, choisissez un véhicule puis passez à la réservation."].join("\n"),
       };
     }
   }
@@ -1415,6 +1506,19 @@ export async function callOpenAi({
     const picks = recommendVehicles({ vehicleQuotes, passengers, bags });
     if (picks.length) {
       const lines = [];
+
+      const chosenVehicleId = clampString((enrichedContextEarly as UnknownRecord).vehicleId, 64);
+      const warning = buildVehicleFitWarning({
+        vehicleId: chosenVehicleId,
+        vehicleQuotes: vehicleQuotes.map((q) => ({ id: q.id, label: q.label })),
+        passengers,
+        bags,
+      });
+      if (warning) {
+        lines.push(warning);
+        lines.push("");
+      }
+
       lines.push("Je vous conseille :");
       for (const p of picks.slice(0, 3)) {
         const price = typeof p.total === "number" ? `${p.total.toFixed(2)} ${currency}` : "sur devis";
@@ -1422,7 +1526,7 @@ export async function callOpenAi({
       }
       lines.push("");
       lines.push("NB: Ces prix sont des estimations. Le chauffeur confirmera votre demande et le tarif.");
-      lines.push("Prochaine étape: choisissez le véhicule puis cliquez sur ‘Réserver’." );
+      lines.push("Prochaine étape: choisissez le véhicule puis passez à la réservation.");
       const suggestedVehicleIds = picks
         .slice(0, 3)
         .map((p) => clampString(p.id, 64))
@@ -1471,7 +1575,7 @@ export async function callOpenAi({
         "Je ne peux pas détailler la méthode de calcul (base, €/km, formules) sur le site.",
         "Je peux en revanche vous donner une estimation du total et vous aider à réserver.",
         "NB: Les prix affichés sont des estimations. Le chauffeur confirmera votre demande et le tarif.",
-        "Prochaine étape: utilisez le bouton ‘Réserver’ ou ‘Envoyer par email/WhatsApp’ pour être recontacté rapidement.",
+        "Prochaine étape: passez à la réservation ou envoyez votre demande par email/WhatsApp pour être recontacté rapidement.",
       ].join("\n"),
     };
   }

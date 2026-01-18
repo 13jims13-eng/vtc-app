@@ -624,7 +624,8 @@ function injectAiAssistantStylesOnce() {
       cursor:pointer;
     }
 
-    @media (max-width: 768px) {
+    /* Mobile mode only on real touch devices (prevents desktop narrow containers from switching to FAB). */
+    @media (max-width: 768px) and (hover: none) and (pointer: coarse) {
       .vtc-ai { display:none; }
       .vtc-ai-fab { display:block; }
       .vtc-ai-modal { display:flex; }
@@ -704,7 +705,8 @@ function buildAiAssistantContext() {
   const dropoff = String(trip?.end || "").trim();
   const date = String(trip?.pickupDate || "").trim();
   const time = String(trip?.pickupTime || "").trim();
-  const vehicle = String(trip?.vehicleLabel || "").trim() || String(trip?.vehicle || "").trim();
+  const vehicleId = String(trip?.vehicle || "").trim();
+  const vehicle = String(trip?.vehicleLabel || "").trim() || vehicleId;
   const options = (selectedOptions || []).map((o) => String(o?.label || "").trim()).filter(Boolean);
   const selectedOptionIds = (selectedOptions || []).map((o) => String(o?.id || "").trim()).filter(Boolean);
 
@@ -744,6 +746,7 @@ function buildAiAssistantContext() {
     date,
     time,
     vehicle,
+    vehicleId,
     currency: "EUR",
     options,
     selectedOptionIds,
@@ -870,6 +873,28 @@ function extractCountsFromUserText(text) {
   const t = String(text || "").toLowerCase();
   const out = { passengers: null, bags: null };
 
+  const looksLikeDateOrTime = (msg) => {
+    const m = String(msg || "").toLowerCase();
+    // Explicit pax/bags shorthand should always be accepted.
+    if (/^\s*\d{1,2}\s*\/\s*\d{1,2}\s*$/.test(m)) return false;
+
+    const hasCountsKeywords = /\b(pax|passagers?|personnes?|adultes?|enfants?|bagages?|valises?|sacs?)\b/.test(m);
+    if (hasCountsKeywords) return false;
+
+    const month = /(janv|janvier|fevr|févr|fevrier|février|mars|avr|avril|mai|juin|juil|juillet|aout|août|sept|septembre|oct|octobre|nov|novembre|dec|déc|decembre|décembre)/;
+    if (month.test(m)) return true;
+
+    // Common date/time patterns
+    if (/\b\d{4}-\d{1,2}-\d{1,2}\b/.test(m)) return true;
+    if (/\b\d{1,2}\s*[.-]\s*\d{1,2}\b/.test(m)) return true;
+    if (/\b\d{1,2}\s*\/\s*\d{1,2}\b/.test(m)) return true;
+    if (/\b\d{1,2}\s*h\s*\d{0,2}\b/.test(m)) return true;
+    if (/\b\d{1,2}:\d{2}\b/.test(m)) return true;
+    if (/\ble\s+\d{1,2}\b/.test(m)) return true;
+
+    return false;
+  };
+
   const wordToNumber = (w) => {
     const s = String(w || "").trim().toLowerCase();
     const map = {
@@ -902,13 +927,16 @@ function extractCountsFromUserText(text) {
 
   // Heuristic: two numbers after being asked ("2/3" = 2 pax, 3 bagages)
   if (out.passengers === null || out.bags === null) {
-    const nums = Array.from(t.matchAll(/\b(\d{1,2})\b/g))
-      .map((m) => Number(m[1]))
-      .filter((n) => Number.isFinite(n))
-      .slice(0, 4);
-    if (nums.length >= 2) {
-      if (out.passengers === null && nums[0] > 0) out.passengers = nums[0];
-      if (out.bags === null && nums[1] >= 0) out.bags = nums[1];
+    // Avoid misreading date/time like "le 20 à 14h" as "20 pax / 14 bagages".
+    if (!looksLikeDateOrTime(t)) {
+      const nums = Array.from(t.matchAll(/\b(\d{1,2})\b/g))
+        .map((m) => Number(m[1]))
+        .filter((n) => Number.isFinite(n))
+        .slice(0, 4);
+      if (nums.length >= 2) {
+        if (out.passengers === null && nums[0] > 0) out.passengers = nums[0];
+        if (out.bags === null && nums[1] >= 0) out.bags = nums[1];
+      }
     }
   }
 
