@@ -640,6 +640,7 @@ function buildAiAssistantContext() {
   const time = String(trip?.pickupTime || "").trim();
   const vehicle = String(trip?.vehicleLabel || "").trim() || String(trip?.vehicle || "").trim();
   const options = (selectedOptions || []).map((o) => String(o?.label || "").trim()).filter(Boolean);
+  const selectedOptionIds = (selectedOptions || []).map((o) => String(o?.id || "").trim()).filter(Boolean);
 
   const isQuote = !!trip?.isQuote;
   const price = typeof window.lastPrice === "number" ? window.lastPrice : null;
@@ -679,6 +680,7 @@ function buildAiAssistantContext() {
     vehicle,
     currency: "EUR",
     options,
+    selectedOptionIds,
     vehiclesCatalog,
     optionsCatalog,
     // Full pricing config (non-sensitive) to allow deterministic server-side quoting
@@ -1488,6 +1490,16 @@ function initAiAssistantUI() {
       lastReply = String(json.reply || "").trim();
       setReply(lastReply);
       pushHistory("assistant", lastReply);
+
+      // Mark that we already asked about options if the assistant prompts for it.
+      try {
+        const t = String(lastReply || "").toLowerCase();
+        if (t.includes("souhaitez-vous") && t.includes("option")) {
+          _widgetState.aiOptionsAskedOnce = true;
+        }
+      } catch {
+        // ignore
+      }
 
       // Optional: let the AI auto-fill calculator fields (no pricing here).
       if (json && typeof json === "object" && json.formUpdate) {

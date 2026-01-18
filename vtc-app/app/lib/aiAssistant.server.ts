@@ -577,6 +577,193 @@ function formatVehicleQuotesBlock(context: UnknownRecord) {
   ].join("\n");
 }
 
+function extractCountsFromText(text: string) {
+  const t = String(text || "").toLowerCase();
+  const out: { passengers: number | null; bags: number | null } = { passengers: null, bags: null };
+
+  // Passengers (pax/personnes/adultes/enfants)
+  const paxMatch = t.match(/\b(\d{1,2})\s*(?:pax|passagers?|personnes?|adultes?|enfants?)\b/);
+  if (paxMatch && paxMatch[1]) {
+    const n = Number(paxMatch[1]);
+    if (Number.isFinite(n) && n > 0 && n < 50) out.passengers = n;
+  }
+
+  // Bags (valises/bagages/sacs)
+  const bagMatch = t.match(/\b(\d{1,2})\s*(?:valises?|bagages?|sacs?)\b/);
+  if (bagMatch && bagMatch[1]) {
+    const n = Number(bagMatch[1]);
+    if (Number.isFinite(n) && n >= 0 && n < 50) out.bags = n;
+  }
+
+  return out;
+}
+
+function extractCountsFromConversation({ userMessage, history }: { userMessage: string; history?: { role: "user" | "assistant"; content: string }[] }) {
+  const allTexts: string[] = [];
+  if (Array.isArray(history)) {
+    for (const h of history) {
+      if (h && typeof h.content === "string") allTexts.push(h.content);
+    }
+  }
+  allTexts.push(userMessage);
+
+  let passengers: number | null = null;
+  let bags: number | null = null;
+
+  for (let i = allTexts.length - 1; i >= 0; i -= 1) {
+    const { passengers: p, bags: b } = extractCountsFromText(allTexts[i] || "");
+    if (passengers === null && typeof p === "number") passengers = p;
+    if (bags === null && typeof b === "number") bags = b;
+    if (passengers !== null && bags !== null) break;
+  }
+
+  return { passengers, bags };
+}
+
+function inferOptionsDecisionFromConversation({ userMessage, history, optionsCatalogLabels }: { userMessage: string; history?: { role: "user" | "assistant"; content: string }[]; optionsCatalogLabels: string[] }) {
+  const texts: string[] = [];
+  if (Array.isArray(history)) {
+    for (const h of history) {
+      if (h && typeof h.content === "string") texts.push(h.content);
+    }
+  }
+  texts.push(userMessage);
+  const t = texts.join("\n").toLowerCase();
+
+  const saysNo =
+    t.includes("aucune option") ||
+    t.includes("sans option") ||
+    t.includes("pas d'option") ||
+    t.includes("pas de option") ||
+    t.includes("non merci") ||
+    t.includes("rien") && t.includes("option");
+  if (saysNo) return "none" as const;
+
+  const normalizedLabels = optionsCatalogLabels
+    .map((s) => String(s || "").trim().toLowerCase())
+    .filter(Boolean)
+    .slice(0, 20);
+  const mentionsLabel = normalizedLabels.some((lbl) => lbl.length >= 3 && t.includes(lbl));
+  const saysYes = t.includes("oui") && t.includes("option");
+  if (mentionsLabel || saysYes) return "some" as const;
+
+  return "" as const;
+}
+
+function inferCapacityFromLabel(label: string) {
+  const s = String(label || "").toLowerCase();
+  const m = s.match(/\b(\d{1,2})\s*(?:pax|places?)\b/);
+  if (m && m[1]) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > 0 && n < 50) return n;
+  }
+  return null;
+}
+
+function isVanLike(label: string) {
+  const s = String(label || "").toLowerCase();
+  return s.includes("van") || s.includes("minibus") || s.includes("mini bus") || s.includes("minivan");
+}
+
+function recommendVehicles({ vehicleQuotes, passengers, bags }: { vehicleQuotes: { id?: string; label?: string; isQuote?: boolean; total?: number | null }[]; passengers: number; bags: number | null }) {
+  const fixed = vehicleQuotes
+    .map((q) => ({
+      id: String(q.id || "").trim(),
+      label: String(q.label || q.id || "").trim(),
+      isQuote: !!q.isQuote,
+      total: typeof q.total === "number" && Number.isFinite(q.total) ? q.total : null,
+      capacity: inferCapacityFromLabel(String(q.label || q.id || "")),
+      vanLike: isVanLike(String(q.label || q.id || "")),
+    }))
+    .filter((q) => q.label)
+    .filter((q) => !q.isQuote && typeof q.total === "number")
+    .sort((a, b) => (a.total ?? 0) - (b.total ?? 0));
+
+  const fits = fixed.filter((q) => (typeof q.capacity === "number" ? q.capacity >= passengers : true));
+  const pool = fits.length ? fits : fixed;
+  if (!pool.length) return [] as typeof fixed;
+
+  const picked: typeof fixed = [];
+  picked.push(pool[0]);
+
+  const wantsVan = typeof bags === "number" && (bags >= 4 || (bags >= 3 && bags >= passengers));
+  if (wantsVan) {
+    const vanAlt = pool.find((q) => q.vanLike && q.id !== picked[0].id);
+    if (vanAlt) picked.push(vanAlt);
+  }
+
+  for (const q of pool) {
+    if (picked.length >= 3) break;
+    if (picked.some((p) => p.id === q.id)) continue;
+    picked.push(q);
+  }
+
+  return picked.slice(0, 3);
+}
+
+async function maybeEnrichContextWithVehicleQuotes({
+  context,
+  pickup,
+  dropoff,
+  pickupDate,
+  pickupTime,
+  selectedOptionIds,
+}: {
+  context: UnknownRecord;
+  pickup: string;
+  dropoff: string;
+  pickupDate: string;
+  pickupTime: string;
+  selectedOptionIds: string[];
+}) {
+  let enrichedContext: UnknownRecord = context;
+  try {
+    const pricingConfig = sanitizePricingConfig((context as UnknownRecord).pricingConfig);
+    const stopsCount = typeof context.stopsCount === "number" ? Math.max(0, context.stopsCount) : 0;
+    if (!pricingConfig || !pickup || !dropoff) return enrichedContext;
+
+    const dir = await getDrivingKmAndMinutes({ origin: pickup, destination: dropoff });
+    if (!dir.ok) return enrichedContext;
+
+    const vehicleQuotes = (pricingConfig.vehicles || [])
+      .map((v) => {
+        const result = computeTariffForVehicle(pricingConfig, {
+          km: dir.km,
+          stopsCount,
+          pickupDate: pickupDate || "",
+          pickupTime: pickupTime || "",
+          vehicleId: v.id,
+          selectedOptionIds: selectedOptionIds || [],
+        });
+
+        if (!result.ok) return null;
+        if (result.isQuote) return { id: result.vehicleId, label: result.vehicleLabel, isQuote: true, total: null };
+        return {
+          id: result.vehicleId,
+          label: result.vehicleLabel,
+          isQuote: false,
+          total: typeof result.total === "number" && Number.isFinite(result.total) ? result.total : null,
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+
+    enrichedContext = {
+      ...context,
+      vehicleQuotes,
+      quote: {
+        ...(context.quote && typeof context.quote === "object" ? (context.quote as UnknownRecord) : {}),
+        distance: dir.km,
+        duration: typeof dir.minutes === "number" ? dir.minutes : null,
+      },
+    };
+  } catch {
+    enrichedContext = context;
+  }
+
+  return enrichedContext;
+}
+
 function redactContextForModel(raw: UnknownRecord): UnknownRecord {
   const ctx: UnknownRecord = { ...(raw || {}) };
 
@@ -1008,6 +1195,106 @@ export async function callOpenAi({
   context: UnknownRecord;
   history?: { role: "user" | "assistant"; content: string }[];
 }) {
+  const optionsCatalogRaw = Array.isArray(context.optionsCatalog) ? (context.optionsCatalog as unknown[]) : [];
+  const optionsCatalogLabels = optionsCatalogRaw
+    .map((o) => (o && typeof o === "object" ? clampString((o as UnknownRecord).label, 60) : ""))
+    .filter(Boolean)
+    .slice(0, 20);
+
+  const inferredOptionsDecision = inferOptionsDecisionFromConversation({ userMessage, history, optionsCatalogLabels });
+  const effectiveOptionsDecision =
+    typeof context.aiOptionsDecision === "string" && context.aiOptionsDecision.trim()
+      ? context.aiOptionsDecision.trim()
+      : inferredOptionsDecision;
+
+  const selectedOptionIdsFromCtx = Array.isArray((context as UnknownRecord).selectedOptionIds)
+    ? ((context as UnknownRecord).selectedOptionIds as unknown[])
+        .map((x) => clampString(x, 64))
+        .filter(Boolean)
+        .slice(0, 12)
+    : [];
+
+  const pickup = clampString(context.pickup, 220);
+  const dropoff = clampString(context.dropoff, 220);
+  const pickupDate = clampString((context as UnknownRecord).date, 32);
+  const pickupTime = clampString((context as UnknownRecord).time, 16);
+
+  // Enrich with server-side quotes early so we can always show tariffs even if the model returns plain text.
+  const enrichedContextEarly = await maybeEnrichContextWithVehicleQuotes({
+    context: { ...context, aiOptionsDecision: effectiveOptionsDecision || undefined },
+    pickup,
+    dropoff,
+    pickupDate,
+    pickupTime,
+    selectedOptionIds: selectedOptionIdsFromCtx,
+  });
+
+  // Step 1: ask about options once (before asking passengers/bags).
+  const hasOptionsCatalog = optionsCatalogLabels.length > 0;
+  const hasSelectedOptions =
+    (Array.isArray(enrichedContextEarly.options) && (enrichedContextEarly.options as unknown[]).some((x) => typeof x === "string" && x.trim())) ||
+    selectedOptionIdsFromCtx.length > 0;
+  const optionsDecisionKnown = !!effectiveOptionsDecision;
+
+  if (hasOptionsCatalog && !optionsDecisionKnown && !hasSelectedOptions) {
+    const examples = optionsCatalogLabels.slice(0, 3);
+    const ex = examples.length ? ` (ex: ${examples.join(" · ")})` : "";
+    return {
+      ok: true as const,
+      reply: [
+        `Souhaitez-vous des options${ex}, ou aucune option ?`,
+        "Vous pouvez cocher des options dans le calculateur, ou répondre: “aucune option”.",
+      ].join("\n"),
+    };
+  }
+
+  // Step 2: if options are decided, ask for passengers/bags if missing.
+  const { passengers, bags } = extractCountsFromConversation({ userMessage, history });
+  if (optionsDecisionKnown && (passengers === null || bags === null)) {
+    const parts = [];
+    if (passengers === null) parts.push("Combien de passagers (pax) ?");
+    if (bags === null) parts.push("Combien de bagages/valises ?");
+    return {
+      ok: true as const,
+      reply: [
+        "Pour vous conseiller le bon véhicule (1 à 2 choix), j’ai besoin de :",
+        ...parts.map((p) => `- ${p}`),
+      ].join("\n"),
+    };
+  }
+
+  // Step 3: if we have passengers/bags + vehicleQuotes, suggest 1–2 vehicles (3 max) with prices.
+  const vehicleQuotesRaw = Array.isArray(enrichedContextEarly.vehicleQuotes) ? (enrichedContextEarly.vehicleQuotes as unknown[]) : [];
+  const vehicleQuotes: { id: string; label: string; isQuote: boolean; total: number | null }[] = [];
+  for (const q of vehicleQuotesRaw) {
+    const qq = q && typeof q === "object" ? (q as UnknownRecord) : null;
+    if (!qq) continue;
+    const id = clampString(qq.id, 64);
+    const label = clampString(qq.label, 80) || id;
+    const isQuote = !!qq.isQuote;
+    const total = typeof qq.total === "number" && Number.isFinite(qq.total) ? qq.total : null;
+    if (!id && !label) continue;
+    vehicleQuotes.push({ id, label, isQuote, total });
+    if (vehicleQuotes.length >= 12) break;
+  }
+
+  if (optionsDecisionKnown && typeof passengers === "number" && passengers > 0 && vehicleQuotes.length) {
+    const currency = typeof enrichedContextEarly.currency === "string" && enrichedContextEarly.currency.trim() ? enrichedContextEarly.currency.trim() : "EUR";
+    const picks = recommendVehicles({ vehicleQuotes, passengers, bags });
+    if (picks.length) {
+      const lines = [];
+      lines.push("Je vous conseille :");
+      for (const p of picks.slice(0, 3)) {
+        const price = typeof p.total === "number" ? `${p.total.toFixed(2)} ${currency}` : "sur devis";
+        lines.push(`- ${p.label}: ${price}`);
+      }
+      lines.push("");
+      lines.push("NB: Ces prix sont des estimations. Le chauffeur confirmera votre demande et le tarif.");
+      lines.push("Prochaine étape: choisissez le véhicule dans le calculateur puis cliquez sur ‘Réserver’." );
+      return { ok: true as const, reply: lines.join("\n") };
+    }
+  }
+
   const msgLower = String(userMessage || "").toLowerCase();
   const asksForPricingMethod = (() => {
     const m = msgLower;
@@ -1086,7 +1373,7 @@ export async function callOpenAi({
     return historyMessages;
   })();
 
-  const safeContext = redactContextForModel(context);
+  const safeContext = redactContextForModel(enrichedContextEarly);
 
   const messages = [
     { role: "system", content: buildSystemPrompt() },
@@ -1336,77 +1623,27 @@ export async function callOpenAi({
     ensureOptionsQuestion({ parsed, context });
     const formUpdate = sanitizeFormUpdate(parsed.formUpdate, context);
 
-    // If we have enough data, compute distance+tariffs server-side and expose them as vehicleQuotes.
-    let enrichedContext: UnknownRecord = context;
-    try {
-      const pricingConfig = sanitizePricingConfig((context as UnknownRecord).pricingConfig);
-      const pickup = clampString(formUpdate?.pickup ?? context.pickup, 220);
-      const dropoff = clampString(formUpdate?.dropoff ?? context.dropoff, 220);
-      const pickupDate = clampString(formUpdate?.pickupDate ?? context.date, 32);
-      const pickupTime = clampString(formUpdate?.pickupTime ?? context.time, 16);
-      const stopsCount = typeof context.stopsCount === "number" ? Math.max(0, context.stopsCount) : 0;
-      const selectedOptionIds = Array.isArray(formUpdate?.optionIds) ? formUpdate?.optionIds : [];
-
-      if (pricingConfig && pickup && dropoff) {
-        const dir = await getDrivingKmAndMinutes({ origin: pickup, destination: dropoff });
-        if (dir.ok) {
-          const vehicleQuotes = (pricingConfig.vehicles || [])
-            .map((v) => {
-              const result = computeTariffForVehicle(pricingConfig, {
-                km: dir.km,
-                stopsCount,
-                pickupDate: pickupDate || "",
-                pickupTime: pickupTime || "",
-                vehicleId: v.id,
-                selectedOptionIds: selectedOptionIds || [],
-              });
-
-              if (!result.ok) return null;
-              if (result.isQuote) {
-                return { id: result.vehicleId, label: result.vehicleLabel, isQuote: true, total: null };
-              }
-              return {
-                id: result.vehicleId,
-                label: result.vehicleLabel,
-                isQuote: false,
-                total: typeof result.total === "number" && Number.isFinite(result.total) ? result.total : null,
-              };
-            })
+    const pickupFrom = clampString(formUpdate?.pickup ?? enrichedContextEarly.pickup, 220);
+    const dropoffFrom = clampString(formUpdate?.dropoff ?? enrichedContextEarly.dropoff, 220);
+    const pickupDateFrom = clampString(formUpdate?.pickupDate ?? (enrichedContextEarly as UnknownRecord).date, 32);
+    const pickupTimeFrom = clampString(formUpdate?.pickupTime ?? (enrichedContextEarly as UnknownRecord).time, 16);
+    const selectedOptionIds = Array.isArray(formUpdate?.optionIds)
+      ? formUpdate.optionIds
+      : Array.isArray((enrichedContextEarly as UnknownRecord).selectedOptionIds)
+        ? (((enrichedContextEarly as UnknownRecord).selectedOptionIds as unknown[]) || [])
+            .map((x) => clampString(x, 64))
             .filter(Boolean)
-            .slice(0, 12);
+            .slice(0, 12)
+        : [];
 
-          enrichedContext = {
-            ...context,
-            vehicleQuotes,
-            quote: {
-              ...(context.quote && typeof context.quote === "object" ? (context.quote as UnknownRecord) : {}),
-              distance: dir.km,
-              duration: typeof dir.minutes === "number" ? dir.minutes : null,
-            },
-          };
-        } else {
-          // Provide an actionable fallback instead of silently failing.
-          ensureRouteClarification({
-            parsed,
-            routeError: { error: String((dir as UnknownRecord).error || "ROUTE_FAILED"), status: (dir as UnknownRecord).status },
-            pickup,
-            dropoff,
-          });
-
-          // Operator diagnostics (Render logs). Avoid logging full addresses.
-          try {
-            console.warn("ai-assistant route compute failed", {
-              error: (dir as UnknownRecord).error,
-              status: (dir as UnknownRecord).status,
-            });
-          } catch {
-            // ignore
-          }
-        }
-      }
-    } catch {
-      enrichedContext = context;
-    }
+    const enrichedContext = await maybeEnrichContextWithVehicleQuotes({
+      context: enrichedContextEarly,
+      pickup: pickupFrom,
+      dropoff: dropoffFrom,
+      pickupDate: pickupDateFrom,
+      pickupTime: pickupTimeFrom,
+      selectedOptionIds,
+    });
 
     ensureVehicleQuotesInRecap({ parsed, context: enrichedContext });
     const reply = formatReplyFromModelJson(parsed, enrichedContext);
@@ -1414,5 +1651,9 @@ export async function callOpenAi({
   }
 
   // Fallback: treat as plain text.
-  return { ok: true as const, reply: replyRaw };
+  const tariffs = formatVehicleQuotesBlock(enrichedContextEarly);
+  const safeReply = answerLooksLikePricingLeak(replyRaw)
+    ? "Voici une estimation du prix total pour votre trajet (sans détail de calcul)."
+    : replyRaw;
+  return { ok: true as const, reply: `${safeReply}${tariffs}`.trim() };
 }
