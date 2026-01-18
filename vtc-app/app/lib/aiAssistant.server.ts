@@ -1180,7 +1180,7 @@ function formatReplyFromModelJson(obj: UnknownRecord, context?: UnknownRecord): 
   lines.push(
     ...(nextStep.length
       ? nextStep.map((s) => `- ${s}`)
-      : ["- Donnez les informations manquantes pour obtenir une estimation, puis choisissez un véhicule et cliquez sur ‘Réserver’. "]),
+      : ["- Donnez les informations manquantes pour obtenir une estimation, puis choisissez un véhicule et passez à la réservation."]),
   );
   return lines.join("\n").trim();
 }
