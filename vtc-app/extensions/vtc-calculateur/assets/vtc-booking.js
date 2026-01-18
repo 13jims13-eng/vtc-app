@@ -955,6 +955,7 @@ function initAiAssistantUI() {
       <div id="vtc-ai-status" class="vtc-ai__status" style="display:none;"></div>
       <div id="vtc-ai-error" class="vtc-ai__error" style="display:none;"></div>
       <div id="vtc-ai-reply" class="vtc-ai__reply" style="display:none;"></div>
+      <div id="vtc-ai-suggestions" class="vtc-ai__suggestions" style="display:none;"></div>
       <div class="vtc-ai__actions">
         <button id="vtc-ai-send-email" class="vtc-ai__btn" type="button">Envoyer par email</button>
         <a id="vtc-ai-whatsapp" class="vtc-ai__btn" href="#" target="_blank" rel="noopener noreferrer">WhatsApp</a>
@@ -1027,6 +1028,7 @@ function initAiAssistantUI() {
   const statusEl = panel.querySelector("#vtc-ai-status");
   const errorEl = panel.querySelector("#vtc-ai-error");
   const replyEl = panel.querySelector("#vtc-ai-reply");
+  const suggestionsEl = panel.querySelector("#vtc-ai-suggestions");
   const sendEmailBtn = panel.querySelector("#vtc-ai-send-email");
   const whatsappLink = panel.querySelector("#vtc-ai-whatsapp");
   // Copy buttons were intentionally removed from the UI, but keep null-safe bindings.
@@ -1034,6 +1036,7 @@ function initAiAssistantUI() {
   const copyReplyBtn = panel.querySelector("#vtc-ai-copy-reply");
 
   let lastReply = "";
+  let lastSuggestedVehicleIds = [];
   const chatHistory = [];
 
   function extractAiSection(text, sectionPrefix) {
@@ -1294,6 +1297,93 @@ function initAiAssistantUI() {
     const v = String(text || "").trim();
     replyEl.style.display = v ? "block" : "none";
     replyEl.innerHTML = v ? renderReplyHtml(v) : "";
+  }
+
+  function setAiSuggestions(ids) {
+    if (!suggestionsEl) return;
+    const list = Array.isArray(ids) ? ids.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 3) : [];
+    if (!list.length) {
+      suggestionsEl.style.display = "none";
+      suggestionsEl.innerHTML = "";
+      return;
+    }
+
+    const cfg = typeof getWidgetConfig === "function" ? getWidgetConfig() : null;
+    const vehicles = Array.isArray(cfg?.vehicles) ? cfg.vehicles : [];
+    const quoteMessage = String(cfg?.quoteMessage || "").trim();
+    const currency = String(cfg?.currency || "EUR").trim() || "EUR";
+
+    const vehiclesById = new Map(vehicles.map((v) => [String(v.id || "").trim(), v]));
+    const ctx = buildAiAssistantContext();
+    const quotes = Array.isArray(ctx?.vehicleQuotes) ? ctx.vehicleQuotes : [];
+    const quoteById = new Map(
+      quotes
+        .map((q) => {
+          const id = String(q?.id || "").trim();
+          return id ? [id, q] : null;
+        })
+        .filter(Boolean),
+    );
+
+    const cards = [];
+    for (const id of list) {
+      const v = vehiclesById.get(id);
+      const q = quoteById.get(id);
+      if (!v) continue;
+
+      const label = String(v.label || id).trim() || id;
+      const imageSrc = (String(v.imageUrl || "").trim() || getVehicleDemoImage(id)).trim();
+      const isQuote = !!(q && q.isQuote);
+      const total = q && typeof q.total === "number" && Number.isFinite(q.total) ? q.total : null;
+
+      const right = isQuote || total === null
+        ? `Sur devis${quoteMessage ? ` — <span style="opacity:0.85;">${escapeHtml(quoteMessage)}</span>` : ""}`
+        : `<strong>${Number(total).toFixed(2)} ${escapeHtml(currency)}</strong>`;
+
+      cards.push(
+        `
+          <div class="vtc-tariff-card" data-vehicle-card="${String(id).replace(/"/g, "&quot;")}">
+            <div class="vtc-tariff-left">
+              <img class="vtc-tariff-image" src="${String(imageSrc).replace(/"/g, "&quot;")}" alt="${String(label).replace(/"/g, "&quot;")}" />
+              <div style="min-width:0;">
+                <div class="vtc-tariff-title">${escapeHtml(label)}</div>
+                <div class="vtc-tariff-price">${right}</div>
+              </div>
+            </div>
+            <button type="button" class="vtc-tariff-select" data-ai-choose-vehicle="${String(id).replace(/"/g, "&quot;")}">Choisir</button>
+          </div>
+        `.trim(),
+      );
+    }
+
+    if (!cards.length) {
+      suggestionsEl.style.display = "none";
+      suggestionsEl.innerHTML = "";
+      return;
+    }
+
+    suggestionsEl.style.display = "block";
+    suggestionsEl.innerHTML = `
+      <h4 style="margin:12px 0 8px 0;">Tarifs proposés</h4>
+      <div class="vtc-tariffs-grid">${cards.join("\n")}</div>
+    `.trim();
+
+    suggestionsEl.querySelectorAll("button[data-ai-choose-vehicle]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const vehicleId = String(btn.getAttribute("data-ai-choose-vehicle") || "").trim();
+        if (!vehicleId) return;
+        const applied = applyAiFormUpdate({ vehicleId });
+        if (applied?.changed) {
+          setStatus("Véhicule sélectionné dans le calculateur.");
+          setTimeout(() => setStatus(""), 1800);
+          try {
+            scrollToAnchor("vtc-tariffs");
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
   }
 
   function applyInputValueIfEmpty(inputEl, value) {
@@ -1576,6 +1666,14 @@ function initAiAssistantUI() {
 
       // Optional: let the AI auto-fill calculator fields (no pricing here).
       if (json && typeof json === "object" && json.formUpdate) {
+        try {
+          const ids = Array.isArray(json.formUpdate?.suggestedVehicleIds) ? json.formUpdate.suggestedVehicleIds : [];
+          lastSuggestedVehicleIds = Array.isArray(ids) ? ids.slice(0, 3) : [];
+          setAiSuggestions(lastSuggestedVehicleIds);
+        } catch {
+          // ignore
+        }
+
         const applied = applyAiFormUpdate(json.formUpdate);
         if (applied?.changed) {
           setStatus(applied.triggered ? "Champs mis à jour, calcul en cours…" : "Champs mis à jour dans le calculateur." );
@@ -1613,12 +1711,26 @@ function initAiAssistantUI() {
                 lastReply = String(json2.reply || "").trim();
                 setReply(lastReply);
                 pushHistory("assistant", lastReply);
+
+                try {
+                  const ids2 = Array.isArray(json2?.formUpdate?.suggestedVehicleIds) ? json2.formUpdate.suggestedVehicleIds : [];
+                  lastSuggestedVehicleIds = Array.isArray(ids2) ? ids2.slice(0, 3) : [];
+                  setAiSuggestions(lastSuggestedVehicleIds);
+                } catch {
+                  // ignore
+                }
               }
             } catch {
               // ignore
             }
           }
         }
+      }
+
+      // If no suggestions were provided, clear the suggestions UI.
+      if (!json?.formUpdate?.suggestedVehicleIds) {
+        lastSuggestedVehicleIds = [];
+        setAiSuggestions([]);
       }
 
       // Restore input UX after reply.

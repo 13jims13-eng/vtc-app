@@ -9,6 +9,9 @@ export type AiAssistantFormUpdate = {
   pickupTime?: string;
   vehicleId?: string;
   optionIds?: string[];
+  // UI-only hint for the widget: which vehicles to highlight.
+  // IMPORTANT: no prices here; the widget already has vehicleQuotes with totals.
+  suggestedVehicleIds?: string[];
 };
 
 export type AiAssistantRequestBody = {
@@ -1034,6 +1037,12 @@ function sanitizeFormUpdate(value: unknown, ctx: UnknownRecord): AiAssistantForm
   const vehicleIdCandidate = clampString(obj.vehicleId, 64);
   const vehicleId = vehicleIdCandidate && allowedVehicleIds.has(vehicleIdCandidate) ? vehicleIdCandidate : "";
 
+  const suggestedVehicleIdsRaw = Array.isArray(obj.suggestedVehicleIds) ? (obj.suggestedVehicleIds as unknown[]) : [];
+  const suggestedVehicleIds = suggestedVehicleIdsRaw
+    .map((x) => clampString(x, 64))
+    .filter((id) => id && allowedVehicleIds.has(id))
+    .slice(0, 3);
+
   const optionsCatalogRaw = Array.isArray(ctx.optionsCatalog) ? (ctx.optionsCatalog as unknown[]) : [];
   const allowedOptionIds = new Set(
     optionsCatalogRaw
@@ -1055,6 +1064,7 @@ function sanitizeFormUpdate(value: unknown, ctx: UnknownRecord): AiAssistantForm
   if (vehicleId) out.vehicleId = vehicleId;
   // If the model explicitly provided optionIds: [] we treat it as an explicit choice of "no options".
   if (hasOptionIdsField) out.optionIds = optionIds;
+  if (suggestedVehicleIds.length) out.suggestedVehicleIds = suggestedVehicleIds;
 
   return Object.keys(out).length ? out : null;
 }
@@ -1389,7 +1399,15 @@ export async function callOpenAi({
       lines.push("");
       lines.push("NB: Ces prix sont des estimations. Le chauffeur confirmera votre demande et le tarif.");
       lines.push("Prochaine étape: choisissez le véhicule dans le calculateur puis cliquez sur ‘Réserver’." );
-      return { ok: true as const, reply: lines.join("\n") };
+      const suggestedVehicleIds = picks
+        .slice(0, 3)
+        .map((p) => clampString(p.id, 64))
+        .filter(Boolean);
+      return {
+        ok: true as const,
+        reply: lines.join("\n"),
+        formUpdate: suggestedVehicleIds.length ? ({ suggestedVehicleIds } as AiAssistantFormUpdate) : undefined,
+      };
     }
   }
 
