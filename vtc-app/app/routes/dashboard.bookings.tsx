@@ -1,9 +1,12 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, data as rrData, redirect, useActionData, useLoaderData } from "react-router";
 import { requireUser } from "../lib/auth.server";
-import { buildBookingSummary, cleanText, sendBookingEmailTo } from "../lib/bookingNotify.server";
+import { buildBookingSummary, cleanText } from "../lib/bookingNotify.server";
 import { createNotification } from "../lib/notifications.server";
 import { getDriverProfileAndSettings, isOnboardingComplete } from "../lib/driver.server";
+
+// TEMP: disable customer-facing emails.
+const CUSTOMER_EMAIL_DISABLED = true;
 
 type LoaderData = {
   notifications: Array<{ id: string; created_at: string; title: string; body: string; read_at: string | null }>;
@@ -155,7 +158,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       body: `Vous avez confirmé la réservation ${bookingId}.`,
     });
 
-    // Notif + email client (si on a un email)
+    // Notif client (si on a un email). Email client intentionally disabled.
     if (clientEmail) {
       const summary = buildBookingSummary({
         contact: {
@@ -181,7 +184,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         consents: { termsConsent: true, marketingConsent: false },
       } as any);
 
-      await sendBookingEmailTo(summary, clientEmail).catch(() => null);
+      if (!CUSTOMER_EMAIL_DISABLED) {
+        // (kept for future re-enable)
+      }
 
       await createNotification({
         recipientEmail: clientEmail,

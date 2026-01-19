@@ -4,13 +4,16 @@ import {
   isValidSingleEmail,
   sendBookingEmail,
   sendBookingEmailTo,
-  sendCustomerConfirmationEmail,
   sendSlackOptional,
   validateBookingSummary,
   type BookingNotifyRequestBody,
 } from "../lib/bookingNotify.server";
 import { getShopConfig } from "../lib/shopConfig.server";
 import { resolveSlackWebhookForShop } from "../lib/slackConfig.server";
+
+// TEMP: disable customer-facing emails.
+// We keep driver email notifications, but do not send confirmation to the client.
+const CUSTOMER_EMAIL_DISABLED = true;
 
 function jsonResponse(data: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
@@ -109,22 +112,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         emailSent = true;
         console.log("email ok", { toSource: emailToSource, toMasked: maskEmail(bookingEmailTo) });
 
-        // Keep customer confirmation email (non-blocking) so the client also receives a message.
-        try {
-          const customerEmail = String(summary.email || "").trim();
-          if (isValidSingleEmail(customerEmail) && customerEmail.toLowerCase() !== bookingEmailTo.toLowerCase()) {
-            const customerRes = await sendCustomerConfirmationEmail(summary);
-            if (customerRes.ok) {
-              console.log("customer email ok", { toMasked: maskEmail(customerEmail) });
-            } else {
-              console.log("customer email skip", { reason: customerRes.error });
-              warnings.push(customerRes.error);
-            }
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.error("customer email ko", message.slice(0, 500));
-          warnings.push("CUSTOMER_EMAIL_FAILED");
+        // Customer confirmation email intentionally disabled.
+        if (!CUSTOMER_EMAIL_DISABLED) {
+          // (kept for future re-enable)
         }
       } else {
         console.log("email skip (tenant not configured)", { shop });
@@ -141,22 +131,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       emailToSource = emailRes.toSource === "setting" ? "setting" : "env";
       console.log("email ok", { toSource: emailRes.toSource });
 
-      // Non-blocking customer confirmation email.
-      try {
-        const customerEmail = String(summary.email || "").trim();
-        if (isValidSingleEmail(customerEmail) && customerEmail.toLowerCase() !== String(emailRes.to || "").toLowerCase()) {
-          const customerRes = await sendCustomerConfirmationEmail(summary);
-          if (customerRes.ok) {
-            console.log("customer email ok", { toMasked: maskEmail(customerEmail) });
-          } else {
-            console.log("customer email skip", { reason: customerRes.error });
-            warnings.push(customerRes.error);
-          }
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error("customer email ko", message.slice(0, 500));
-        warnings.push("CUSTOMER_EMAIL_FAILED");
+      // Customer confirmation email intentionally disabled.
+      if (!CUSTOMER_EMAIL_DISABLED) {
+        // (kept for future re-enable)
       }
     }
   } catch (err) {
