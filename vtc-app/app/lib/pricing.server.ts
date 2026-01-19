@@ -144,7 +144,10 @@ export function computeTariffForVehicle(config: TenantPricingConfig, input: {
     };
   }
 
-  let total = km * (Number(vehicle.pricePerKm) || 0);
+  // Billing rule: base fare + per-km from the 1st km.
+  // 0–1 km counts as 1 km. We round up so 12.2 km => 13 km billed.
+  const billableKm = Math.max(1, Math.ceil(km));
+  let total = (Number(vehicle.baseFare) || 0) + billableKm * (Number(vehicle.pricePerKm) || 0);
   total += extraStopsTotal;
 
   // Majoration nuit 22h–05h
@@ -156,8 +159,7 @@ export function computeTariffForVehicle(config: TenantPricingConfig, input: {
   // Remise si > 600 €
   if (total > 600) total *= 0.9;
 
-  // Minimum (base fare)
-  if (total < (Number(vehicle.baseFare) || 0)) total = Number(vehicle.baseFare) || 0;
+  // baseFare is always included (no minimum rule needed)
 
   const optionsPricing = computeOptions(config, total, input.selectedOptionIds || []);
   total += optionsPricing.totalFee;

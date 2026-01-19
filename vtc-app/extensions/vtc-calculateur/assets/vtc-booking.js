@@ -2722,7 +2722,24 @@ function computeTariffForVehicle({ km, stopsCount, pickupTime, pickupDate, vehic
     };
   }
 
-  let total = (km || 0) * (vehicle.pricePerKm || 0);
+  const kmRaw = typeof km === "number" ? km : Number(km);
+  const kmSafe = Number.isFinite(kmRaw) ? Math.max(0, kmRaw) : null;
+  // Billing rule: base fare + per-km from the 1st km.
+  // 0–1 km counts as 1 km. We round up so 12.2 km => 13 km billed.
+  // If distance is unknown (kmSafe === null), keep a quote-like result.
+  if (kmSafe === null) {
+    return {
+      vehicleId: vehicle.id,
+      vehicleLabel: vehicle.label,
+      isQuote: true,
+      total: 0,
+      quoteMessage: cfg.quoteMessage,
+      pricingMode: null,
+    };
+  }
+
+  const billableKm = kmSafe > 0 ? Math.max(1, Math.ceil(kmSafe)) : 0;
+  let total = (vehicle.baseFare || 0) + billableKm * (vehicle.pricePerKm || 0);
   total += extraStopsTotal;
 
   // Majoration nuit 22h–05h
@@ -2734,8 +2751,7 @@ function computeTariffForVehicle({ km, stopsCount, pickupTime, pickupDate, vehic
   // Remise si > 600 €
   if (total > 600) total *= 0.9;
 
-  // Minimum (base fare)
-  if (total < (vehicle.baseFare || 0)) total = vehicle.baseFare || 0;
+  // baseFare is always included (no minimum rule needed)
 
   const optionsPricing = computeSelectedOptionsPricing(total);
   total += optionsPricing.totalFee;
